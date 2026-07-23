@@ -19,8 +19,10 @@ tidy per-rung price/impact/route data as a DataFrame.
 ## Install
 
 ```bash
-uv add price-of-ethereum          # or: uv pip install price-of-ethereum
-uv add "price-of-ethereum[viz]"   # + Plotly for the example notebooks
+pip install price-of-ethereum          # plain pip works; uv is optional
+pip install "price-of-ethereum[viz]"   # + Plotly for the example notebooks
+
+uv add price-of-ethereum               # if you prefer uv
 ```
 
 ## Run a local Fynd
@@ -62,12 +64,23 @@ print(fynd.info().chain_id)
 
 ## Development
 
+With uv (recommended):
+
 ```bash
 uv sync
 uv run ruff check
 uv run ruff format --check
 uv run ty check
 uv run pytest
+```
+
+Or with plain pip — uv, ruff, and ty are development conveniences, never runtime
+requirements:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e . --group dev   # pip >= 25.1; or: pip install -e . pytest
+pytest
 ```
 
 ## License

@@ -11,7 +11,7 @@
 #                          (min_responses=0).
 #
 # The PFW task_queue_capacity is deliberately tiny (12): Fynd fans EVERY quote
-# to every pool, so an uncapped PFW queue would compute a ~900ms split route
+# to every pool, so an uncapped PFW queue would compute a ~1s split route
 # for all ~800 per-block sweep quotes and saturate the CPU. With a small queue,
 # the sweep overflow is dropped cheaply and PFW spends its budget on the anchors
 # that actually wait for it.
@@ -42,12 +42,14 @@ connector_tokens = [
 # this intermittently, so restrict PFW to the deep, always-priced core; splits
 # still form across the many WETH/USDC + WETH/USDT pools. bellman_ford keeps the
 # wider connector set (it skips bad pools and never errors).
+# 3 hops + 1s timeout follow fynd's tools/benchmark/path_frank_wolfe_3hop.toml;
+# the queue cap stays at 12 (the benchmark's 1000 is a benchmark artifact).
 [pools.path_frank_wolfe]
 algorithm = "path_frank_wolfe"
 num_workers = 4
 task_queue_capacity = 12
-max_hops = 2
-timeout_ms = 900
+max_hops = 3
+timeout_ms = 1000
 connector_tokens = [
     "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
