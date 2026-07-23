@@ -1,0 +1,55 @@
+# Fynd worker pools for reproducing the marketprice.xyz dataset.
+#
+# Fynd fans every quote out to all pools and returns the best by
+# amount_out_net_gas, so two pools compete on every request:
+#
+#   bellman_ford_2_hops  — proven single-path baseline. Fast; the bulk depth
+#                          sweep waits only for this (min_responses=1).
+#   path_frank_wolfe     — split-routing solver. Returns multi-route "split"
+#                          quotes when they beat the single path. Only the
+#                          handful of headline anchor quotes wait for it
+#                          (min_responses=0).
+#
+# The PFW task_queue_capacity is deliberately tiny (12): Fynd fans EVERY quote
+# to every pool, so an uncapped PFW queue would compute a ~900ms split route
+# for all ~800 per-block sweep quotes and saturate the CPU. With a small queue,
+# the sweep overflow is dropped cheaply and PFW spends its budget on the anchors
+# that actually wait for it.
+#
+# connector_tokens restrict intermediate hops to a trusted, liquid set and
+# deliberately OMIT native ETH (0x0000…0000): we quote WETH<->USDC and never
+# wrap ETH, so excluding it keeps routing off the native_wrapper component whose
+# Tycho state is intermittently unavailable under load.
+
+[pools.bellman_ford_2_hops]
+algorithm = "bellman_ford"
+num_workers = 4
+task_queue_capacity = 1000
+max_hops = 2
+timeout_ms = 500
+connector_tokens = [
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
+    "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599",  # WBTC
+    "0x6b175474e89094c44da98b954eedeac495271d0f",  # DAI
+    "0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0",  # wstETH
+    "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",  # UNI
+]
+
+# PFW errors the whole quote if any hop's post-swap marginal price is <= 0
+# (a degraded/empty Tycho pool returning 0.0 spot). Thin connector pools do
+# this intermittently, so restrict PFW to the deep, always-priced core; splits
+# still form across the many WETH/USDC + WETH/USDT pools. bellman_ford keeps the
+# wider connector set (it skips bad pools and never errors).
+[pools.path_frank_wolfe]
+algorithm = "path_frank_wolfe"
+num_workers = 4
+task_queue_capacity = 12
+max_hops = 2
+timeout_ms = 900
+connector_tokens = [
+    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2",  # WETH
+    "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
+    "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
+]
