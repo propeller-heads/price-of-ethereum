@@ -7,6 +7,12 @@ kept intentionally small and re-exported here.
 
 from __future__ import annotations
 
+from price_of_ethereum.fynd import DUMMY_SENDER, FyndClient, FyndError
+
 __version__ = "0.1.0"
 
-__all__: list[str] = []
+__all__ = [
+    "DUMMY_SENDER",
+    "FyndClient",
+    "FyndError",
+]
