@@ -18,7 +18,10 @@ import math
 from dataclasses import dataclass
 from decimal import Decimal
 
-from price_of_ethereum.fynd.client import FyndClient
+import httpx
+from pydantic import ValidationError
+
+from price_of_ethereum.fynd.client import FyndClient, FyndError
 
 # Default numeraire notional for the marginal spot probe.
 DEFAULT_PROBE_NOTIONAL = 1000.0
@@ -44,13 +47,13 @@ def numeraire_grid(min_notional: float, max_notional: float, samples: int) -> li
         raise ValueError("samples must be >= 1")
     if samples == 1 or min_notional == max_notional:
         return [min_notional] * samples
+    # Endpoints stay exp(log(x)) — a few ULP off the exact bounds — because the
+    # reference collector computes them that way and the golden parity tests
+    # pin its numbers; "fixing" the drift shifts endpoint rungs by one atomic
+    # unit and breaks parity.
     low = math.log(min_notional)
     high = math.log(max_notional)
-    grid = [math.exp(low + (high - low) * i / (samples - 1)) for i in range(samples)]
-    # Pin endpoints exactly; exp(log(x)) drifts by a few ULP otherwise.
-    grid[0] = min_notional
-    grid[-1] = max_notional
-    return grid
+    return [math.exp(low + (high - low) * i / (samples - 1)) for i in range(samples)]
 
 
 def spot_price(
@@ -65,13 +68,21 @@ def spot_price(
     """Marginal price of `token` in numeraire units, from one probe quote that
     buys the token with `probe_notional` of numeraire (numeraire -> token)."""
     order = fynd.build_order(numeraire, token, atomic(probe_notional, numeraire_decimals))
-    orders = fynd.quote(order, min_responses=1).orders
+    try:
+        orders = fynd.quote(order, min_responses=1).orders
+    except (FyndError, httpx.HTTPError, ValidationError) as error:
+        raise SpotProbeError(f"spot probe request failed: {error}") from error
     if not orders:
         raise SpotProbeError("spot probe returned no orders")
     order_quote = orders[0]
     if order_quote.status != "success":
         raise SpotProbeError(f"spot probe returned status={order_quote.status}")
-    token_out_units = int(order_quote.amount_out) / 10**token_decimals
+    try:
+        token_out_units = int(order_quote.amount_out) / 10**token_decimals
+    except ValueError as error:
+        raise SpotProbeError(
+            f"spot probe returned malformed amount_out={order_quote.amount_out!r}"
+        ) from error
     if token_out_units <= 0:
         raise SpotProbeError("spot probe returned zero output")
     return probe_notional / token_out_units
