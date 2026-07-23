@@ -122,6 +122,21 @@ def test_spot_price_zero_output_raises() -> None:
         spot_price(fynd, token=WETH, token_decimals=18, numeraire=USDC, numeraire_decimals=6)
 
 
+def test_spot_price_malformed_amount_raises_spot_probe_error() -> None:
+    fynd = _fynd_returning("not-a-number")
+    with pytest.raises(SpotProbeError, match="malformed amount_out"):
+        spot_price(fynd, token=WETH, token_decimals=18, numeraire=USDC, numeraire_decimals=6)
+
+
+def test_spot_price_transport_failure_raises_spot_probe_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    fynd = FyndClient(transport=httpx.MockTransport(handler))
+    with pytest.raises(SpotProbeError, match="request failed"):
+        spot_price(fynd, token=WETH, token_decimals=18, numeraire=USDC, numeraire_decimals=6)
+
+
 def test_spot_price_empty_orders_raises() -> None:
     empty = {"orders": [], "total_gas_estimate": "0", "solve_time_ms": 1}
 
@@ -137,8 +152,9 @@ def test_full_eth_usdc_sizing_range() -> None:
     # End-to-end sizing sanity for ETH/USDC over $100..$50M at spot 2500.
     grid = numeraire_grid(100.0, 50_000_000.0, 100)
     rungs = size_rungs(grid, spot=2500.0, token_decimals=18, numeraire_decimals=6)
-    assert rungs[0].buy_amount == 100 * 10**6
-    assert rungs[-1].buy_amount == atomic(50_000_000.0, 6)
+    # Endpoints are exp(log(x)) — a few ULP off the exact bounds, matching the
+    # reference collector's grid — so compare at 1e-9 relative, not exactly.
+    assert math.isclose(rungs[0].buy_amount, 100 * 10**6, rel_tol=1e-9)
+    assert math.isclose(rungs[-1].buy_amount, atomic(50_000_000.0, 6), rel_tol=1e-9)
     # sell side: notional/spot WETH, e.g. $50M / 2500 = 20000 WETH at the top.
-    assert rungs[-1].sell_amount == atomic(50_000_000.0 / 2500.0, 18)
     assert math.isclose(rungs[-1].sell_amount / 10**18, 20_000.0, rel_tol=1e-9)
