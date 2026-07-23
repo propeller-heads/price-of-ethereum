@@ -1,0 +1,195 @@
+"""Collector-loop tests over an AMM mock whose block advances per spot probe.
+
+The spot probe is the first quote of every collection cycle, so bumping the
+simulated block each time the probe's amount is seen gives every cycle one
+consistent, strictly increasing block — no timing dependence.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+
+import amm_sim
+from price_of_ethereum import FyndClient, SnapshotConfig, TokenMeta
+from price_of_ethereum.collect import CollectionAbortedError, collect_blocks, output_paths
+from price_of_ethereum.sizing import atomic
+from price_of_ethereum.snapshot import collect_snapshot
+from price_of_ethereum.storage import load_jsonl
+
+WETH = TokenMeta(address=amm_sim.WETH_ADDRESS, symbol="WETH", decimals=18, quality=100, tax=0)
+USDC = TokenMeta(address=amm_sim.USDC_ADDRESS, symbol="USDC", decimals=6, quality=100, tax=0)
+
+SPOT_PROBE_AMOUNT = atomic(1000.0, USDC.decimals)
+
+
+def make_config() -> SnapshotConfig:
+    # Grid values (50, 500, 5000, 50000) never collide with the $1000 probe.
+    return SnapshotConfig(
+        token=WETH,
+        numeraire=USDC,
+        pair="ETH/USDC",
+        chain_id=1,
+        search_min=50.0,
+        search_max=50_000.0,
+        samples_per_side=4,
+        impact_levels=(1.0,),
+        anchor_targets=(),
+        max_workers=2,
+    )
+
+
+def advancing_block_client(*, blocks_per_advance: int = 1) -> FyndClient:
+    """AMM mock whose block bumps every `blocks_per_advance` spot probes."""
+    state = {"probes": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        is_probe = (
+            order["token_in"].lower() == amm_sim.USDC_ADDRESS.lower()
+            and int(order["amount"]) == SPOT_PROBE_AMOUNT
+        )
+        if is_probe:
+            state["probes"] += 1
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        block = amm_sim.BLOCK_NUMBER + (state["probes"] - 1) // blocks_per_advance
+        body["orders"][0]["block"]["number"] = block
+        return httpx.Response(200, json=body)
+
+    return FyndClient(transport=httpx.MockTransport(handler))
+
+
+def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
+    config = make_config()
+    with advancing_block_client() as fynd:
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=3, idle_wait_s=0.0)
+
+    assert result.blocks_recorded == 3
+    assert result.duplicate_snapshots == 0
+    assert result.failed_cycles == 0
+    assert result.interrupted is False
+    blocks_frame = load_jsonl(result.blocks_path)
+    assert blocks_frame["block_number"].tolist() == [
+        amm_sim.BLOCK_NUMBER,
+        amm_sim.BLOCK_NUMBER + 1,
+        amm_sim.BLOCK_NUMBER + 2,
+    ]
+    rows_frame = load_jsonl(result.rows_path)
+    assert result.rows_written == len(rows_frame) > 0
+    assert set(rows_frame["kind"]) == {"curve", "anchor"}
+    assert rows_frame["pair"].unique().tolist() == ["ETH/USDC"]
+
+
+def test_collect_skips_duplicate_blocks(tmp_path: Path) -> None:
+    config = make_config()
+    with advancing_block_client(blocks_per_advance=2) as fynd:
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, idle_wait_s=0.0)
+
+    assert result.blocks_recorded == 2
+    assert result.duplicate_snapshots > 0
+    blocks_frame = load_jsonl(result.blocks_path)
+    assert blocks_frame["block_number"].is_unique
+
+
+def test_collect_raises_after_consecutive_failures(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        body["orders"][0]["status"] = "not_ready"
+        return httpx.Response(200, json=body)
+
+    config = make_config()
+    with (
+        FyndClient(transport=httpx.MockTransport(handler)) as fynd,
+        pytest.raises(CollectionAbortedError, match="3 consecutive"),
+    ):
+        collect_blocks(
+            fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0, max_consecutive_failures=3
+        )
+    rows_path, blocks_path = output_paths(tmp_path, config)
+    assert not rows_path.exists() and not blocks_path.exists()
+
+
+def test_collect_recovers_after_transient_failures(tmp_path: Path) -> None:
+    # Fails probes 1-2, succeeds, fails probes 4-5, succeeds: with the cap at 3
+    # this only completes if the consecutive-failure counter resets on success.
+    failing_probes = {1, 2, 4, 5}
+    state = {"probes": 0, "block": amm_sim.BLOCK_NUMBER}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        is_probe = (
+            order["token_in"].lower() == amm_sim.USDC_ADDRESS.lower()
+            and int(order["amount"]) == SPOT_PROBE_AMOUNT
+        )
+        if is_probe:
+            state["probes"] += 1
+            if state["probes"] in failing_probes:
+                body["orders"][0]["status"] = "not_ready"
+                return httpx.Response(200, json=body)
+            state["block"] = amm_sim.BLOCK_NUMBER + state["probes"]
+        body["orders"][0]["block"]["number"] = state["block"]
+        return httpx.Response(200, json=body)
+
+    with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
+        result = collect_blocks(
+            fynd,
+            make_config(),
+            out_dir=tmp_path,
+            blocks=2,
+            idle_wait_s=0.0,
+            max_consecutive_failures=3,
+        )
+    assert result.blocks_recorded == 2
+    assert result.failed_cycles == 4
+    assert result.interrupted is False
+
+
+def test_collect_resumes_past_block_already_on_disk(tmp_path: Path) -> None:
+    config = make_config()
+    with advancing_block_client() as fynd:
+        first = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+    assert load_jsonl(first.blocks_path)["block_number"].tolist() == [amm_sim.BLOCK_NUMBER]
+
+    # A fresh client re-serves BLOCK_NUMBER first; the restarted collector must
+    # skip it (seeded from disk) and record the next block instead.
+    with advancing_block_client() as fynd:
+        second = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+    assert second.duplicate_snapshots == 1
+    assert load_jsonl(second.blocks_path)["block_number"].tolist() == [
+        amm_sim.BLOCK_NUMBER,
+        amm_sim.BLOCK_NUMBER + 1,
+    ]
+
+
+def test_collect_returns_partial_result_on_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = make_config()
+    with advancing_block_client() as fynd:
+        recorded_snapshot = collect_snapshot(fynd, config)
+
+        calls = {"count": 0}
+
+        def snapshot_then_interrupt(*args: object, **kwargs: object):
+            calls["count"] += 1
+            if calls["count"] == 1:
+                return recorded_snapshot
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr("price_of_ethereum.collect.collect_snapshot", snapshot_then_interrupt)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=5, idle_wait_s=0.0)
+
+    assert result.interrupted is True
+    assert result.blocks_recorded == 1
+    assert load_jsonl(result.blocks_path)["block_number"].tolist() == [amm_sim.BLOCK_NUMBER]
+
+
+def test_output_paths_slug(tmp_path: Path) -> None:
+    rows_path, blocks_path = output_paths(tmp_path, make_config())
+    assert rows_path.name == "eth-usdc_1.rows.jsonl"
+    assert blocks_path.name == "eth-usdc_1.blocks.jsonl"
