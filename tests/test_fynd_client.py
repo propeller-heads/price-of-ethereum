@@ -120,9 +120,19 @@ def test_quote_encoding_on_by_default() -> None:
     client, rec = client_with({("POST", "/v1/quote"): (200, QUOTE_OK)})
     client.quote(client.build_order(WETH, USDC, 10**18), min_responses=1, timeout_ms=2000)
     opts = rec.last_json["options"]
-    assert opts["encoding_options"] == {"slippage": 0.001, "transfer_type": "transfer_from"}
+    assert opts["encoding_options"] == {"slippage": "0.001", "transfer_type": "transfer_from"}
     assert opts["min_responses"] == 1
     assert opts["timeout_ms"] == 2000
+
+
+def test_quote_slippage_serializes_as_a_string() -> None:
+    # Fynd rejects a JSON number here ("expected a string"), and the OpenAPI
+    # schema's `type: number` is wrong, so pin the wire type explicitly.
+    client, rec = client_with({("POST", "/v1/quote"): (200, QUOTE_OK)})
+    client.quote(client.build_order(WETH, USDC, 10**18), slippage="0.005")
+    slippage = rec.last_json["options"]["encoding_options"]["slippage"]
+    assert isinstance(slippage, str)
+    assert slippage == "0.005"
 
 
 def test_quote_encoding_off_omits_encoding_options() -> None:

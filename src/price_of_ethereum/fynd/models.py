@@ -39,7 +39,12 @@ class Order(BaseModel):
 
 
 class EncodingOptions(BaseModel):
-    slippage: float = Field(description="Slippage tolerance as a fraction: 0.001 = 0.1%.")
+    # Sent as a decimal string, not a number: the server's deserializer rejects a
+    # JSON float ("invalid type: floating point `0.001`, expected a string"),
+    # verified against Fynd 0.97.4. The OpenAPI schema types this as `number`
+    # while its own example quotes it — the example is the accurate half, so the
+    # spec drift check cannot catch this and the type is pinned here instead.
+    slippage: str = Field(description="Slippage tolerance as a decimal string: '0.001' = 0.1%.")
     transfer_type: UserTransferType | None = None
 
 
