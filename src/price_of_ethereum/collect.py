@@ -1,14 +1,14 @@
 """Per-block collection loop: wait for a new block, snapshot it, append to JSONL.
 
 There is no RPC block clock. Fynd's own view of the chain is the only one that
-matters here — a quote is solved against whatever state Fynd holds — so the clock
-is a single cheap quote: `probe_block` asks what block Fynd would answer on right
-now, and the full sweep only runs once that block differs from the last recorded
-one. Block *identity* still comes from majority reconciliation across the sweep's
-own quotes, so the probe decides only when to measure, never what to label.
+matters, because a quote is solved against whatever state Fynd holds — an external
+block feed can report a block Fynd has not ingested yet. So the clock is a single
+quote: `probe_block` asks which block Fynd would answer on, and a full sweep runs
+only once that differs from the last recorded block. Waiting therefore costs one
+quote per cycle rather than the ~240 a sweep spends.
 
-Polling by full snapshot instead costs ~240 quotes per idle cycle; measured over
-a 10-block mainnet run, 42 of 52 snapshots were discarded that way.
+Block *identity* comes from majority reconciliation across the sweep's own
+quotes. The probe decides when to measure, never what to label.
 """
 
 from __future__ import annotations
