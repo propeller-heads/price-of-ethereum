@@ -11,15 +11,20 @@ convert once, load fast. No database anywhere.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Reverse-read granularity. Lines longer than this still parse; the buffer just
+# grows until it finds a newline.
+REVERSE_CHUNK_BYTES = 65_536
 
 
 def append_jsonl(path: Path | str, records: Iterable[dict[str, Any]]) -> int:
@@ -57,6 +62,71 @@ def load_jsonl(path: Path | str) -> pd.DataFrame:
                 logger.warning("skipping torn final line in %s", path)
                 break
             raise
+    return pd.DataFrame.from_records(records)
+
+
+def iter_jsonl_reverse(
+    path: Path | str, *, chunk_size: int = REVERSE_CHUNK_BYTES
+) -> Iterator[dict[str, Any]]:
+    """Yield records newest-first by reading the file backwards.
+
+    Memory stays bounded regardless of file size, so a reader can pull the most
+    recent block out of a long collection without parsing everything before it.
+    A torn trailing line is skipped like `load_jsonl` does; a decode failure
+    further back is real corruption and raises.
+    """
+    path = Path(path)
+    at_trailing_line = True
+    with path.open("rb") as handle:
+        handle.seek(0, io.SEEK_END)
+        remaining = handle.tell()
+        pending = b""
+        while remaining > 0:
+            read_size = min(chunk_size, remaining)
+            remaining -= read_size
+            handle.seek(remaining)
+            pending = handle.read(read_size) + pending
+            lines = pending.split(b"\n")
+            pending = lines.pop(0)
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                record = _decode_reverse_line(line, path, at_trailing_line)
+                at_trailing_line = False
+                if record is not None:
+                    yield record
+        if pending.strip():
+            record = _decode_reverse_line(pending, path, at_trailing_line)
+            if record is not None:
+                yield record
+
+
+def _decode_reverse_line(line: bytes, path: Path, at_trailing_line: bool) -> dict[str, Any] | None:
+    try:
+        return json.loads(line)
+    except json.JSONDecodeError:
+        if not at_trailing_line:
+            raise
+        logger.warning("skipping torn final line in %s", path)
+        return None
+
+
+def load_latest_block_rows(path: Path | str) -> pd.DataFrame:
+    """Rows belonging to the newest `block_number` in a rows file.
+
+    Reads backwards and stops at the first record from an older block, so cost
+    of a refresh is one block's worth of lines rather than the whole file.
+    """
+    latest_block: Any = None
+    records: list[dict[str, Any]] = []
+    for record in iter_jsonl_reverse(path):
+        block = record.get("block_number")
+        if latest_block is None:
+            latest_block = block
+        elif block != latest_block:
+            break
+        records.append(record)
+    records.reverse()
     return pd.DataFrame.from_records(records)
 
 

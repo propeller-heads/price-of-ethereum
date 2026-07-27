@@ -1,9 +1,13 @@
-"""`poe` — thin CLI over the library: one-shot snapshots and the collection loop.
+"""`poe` — thin CLI over the library.
 
-All measurement logic lives in the library; the CLI only resolves token
-metadata via Tycho, builds a `SnapshotConfig`, and drives it. The Tycho API key
-comes from `--tycho-api-key` or the `TYCHO_API_KEY` environment variable (get a
-free key from https://t.me/fynd_portal_bot).
+Two write-side commands measure (`snapshot`, `collect`) and need a local Fynd
+plus a Tycho key for token metadata — from `--tycho-api-key` or the
+`TYCHO_API_KEY` environment variable (free key from https://t.me/fynd_portal_bot).
+Two read-side commands render what is already on disk (`serve`, `report`) and
+connect to nothing; they need the `viz` extra for Plotly.
+
+All measurement logic lives in the library; the CLI only builds a
+`SnapshotConfig` and drives it.
 """
 
 from __future__ import annotations
@@ -14,12 +18,21 @@ import logging
 import os
 import sys
 from dataclasses import fields as dataclass_fields
+from pathlib import Path
 
-from price_of_ethereum.collect import CollectionAbortedError, collect_blocks, output_paths
+import pandas as pd
+
+from price_of_ethereum.collect import (
+    CollectionAbortedError,
+    collect_blocks,
+    output_paths,
+    paths_for,
+)
 from price_of_ethereum.fynd.client import FyndClient, FyndError
+from price_of_ethereum.serve import DEFAULT_HOST, DEFAULT_POLL_S, DEFAULT_PORT, serve_dashboard
 from price_of_ethereum.sizing import SpotProbeError
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
-from price_of_ethereum.storage import append_jsonl
+from price_of_ethereum.storage import append_jsonl, load_jsonl, load_latest_block_rows
 from price_of_ethereum.tokens import resolve_tokens
 from price_of_ethereum.tycho.client import TychoClient, TychoError
 from price_of_ethereum.tycho.models import Chain
@@ -94,6 +107,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Number of distinct blocks to record (default: run until Ctrl-C).",
     )
+
+    # Read-side commands render recorded data and connect to nothing, so they
+    # locate files by pair/chain instead of asking Fynd which chain it serves.
+    for name, help_text in (
+        ("serve", "Serve a live dashboard over recorded data (needs the viz extra)."),
+        ("report", "Write a self-contained HTML report (needs the viz extra)."),
+    ):
+        sub = subparsers.add_parser(name, help=help_text)
+        sub.add_argument("--out", default="data", help="Directory holding the JSONL files.")
+        sub.add_argument("--pair", default="ETH/USDC", help="Pair label used in the filenames.")
+        sub.add_argument("--chain-id", type=int, default=1, help="Chain id used in the filenames.")
+
+    serve_parser = subparsers.choices["serve"]
+    serve_parser.add_argument("--host", default=DEFAULT_HOST)
+    serve_parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    serve_parser.add_argument(
+        "--poll-s", type=float, default=DEFAULT_POLL_S, help="Page refresh interval in seconds."
+    )
+    report_parser = subparsers.choices["report"]
+    report_parser.add_argument(
+        "--output", default="report.html", help="Path of the HTML file to write."
+    )
     return parser
 
 
@@ -157,9 +192,52 @@ def run_collect(
     return 0 if result.blocks_recorded > 0 else 1
 
 
+def read_side_paths(args: argparse.Namespace) -> tuple[Path, Path]:
+    rows_path, blocks_path = paths_for(args.out, pair=args.pair, chain_id=args.chain_id)
+    if not rows_path.exists() and not blocks_path.exists():
+        raise SystemExit(
+            f"no recorded data for {args.pair} on chain {args.chain_id} under {args.out}; "
+            f"run `poe collect` first (expected {rows_path.name})."
+        )
+    return rows_path, blocks_path
+
+
+def run_serve(args: argparse.Namespace) -> int:
+    rows_path, blocks_path = read_side_paths(args)
+    serve_dashboard(
+        rows_path,
+        blocks_path,
+        title=f"{args.pair} — measured depth",
+        host=args.host,
+        port=args.port,
+        poll_s=args.poll_s,
+    )
+    return 0
+
+
+def run_report(args: argparse.Namespace) -> int:
+    from price_of_ethereum.dashboard import write_report
+
+    rows_path, blocks_path = read_side_paths(args)
+    rows = load_latest_block_rows(rows_path) if rows_path.exists() else pd.DataFrame()
+    blocks = load_jsonl(blocks_path) if blocks_path.exists() else pd.DataFrame()
+    written = write_report(args.output, rows, blocks, title=f"{args.pair} — measured depth")
+    print(f"wrote {written} ({written.stat().st_size / 1e6:.1f} MB, self-contained)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = build_parser().parse_args(argv)
+    # Read-side commands render what is on disk; they never reach for Fynd.
+    if args.command in ("serve", "report"):
+        try:
+            return run_serve(args) if args.command == "serve" else run_report(args)
+        except ImportError as error:
+            raise SystemExit(
+                "the dashboard needs the viz extra: "
+                "pip install 'price-of-ethereum[viz]' (or: uv sync --extra viz)"
+            ) from error
     # Expected operational failures exit with a message, not a traceback.
     try:
         with FyndClient(args.fynd_url) as fynd:

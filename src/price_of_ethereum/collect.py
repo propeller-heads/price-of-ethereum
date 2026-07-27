@@ -39,16 +39,20 @@ class CollectResult:
     blocks_path: Path
 
 
-def output_paths(out_dir: Path | str, config: SnapshotConfig) -> tuple[Path, Path]:
+def paths_for(out_dir: Path | str, *, pair: str, chain_id: int) -> tuple[Path, Path]:
     """(rows_path, blocks_path) for a pair/chain, e.g. `eth-usdc_1.rows.jsonl`.
 
     The pair label is reduced to filesystem-safe characters so it can never
     escape `out_dir` on any platform.
     """
-    pair_slug = re.sub(r"[^a-z0-9._-]+", "-", config.pair.lower())
-    slug = f"{pair_slug}_{config.chain_id}"
+    pair_slug = re.sub(r"[^a-z0-9._-]+", "-", pair.lower())
+    slug = f"{pair_slug}_{chain_id}"
     out_dir = Path(out_dir)
     return out_dir / f"{slug}.rows.jsonl", out_dir / f"{slug}.blocks.jsonl"
+
+
+def output_paths(out_dir: Path | str, config: SnapshotConfig) -> tuple[Path, Path]:
+    return paths_for(out_dir, pair=config.pair, chain_id=config.chain_id)
 
 
 def _last_recorded_block(blocks_path: Path) -> int | None:
