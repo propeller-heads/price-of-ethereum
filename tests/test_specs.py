@@ -18,7 +18,7 @@ SPECS = Path(__file__).resolve().parent.parent / "specs"
 
 PINS = {
     "fynd.openapi.json": {
-        "version": "0.97.0",
+        "version": "0.97.3",
         "url": "https://fynd-api.propellerheads.xyz/api-docs/openapi.json",
     },
     "tycho.openapi.json": {
