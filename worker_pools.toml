@@ -1,7 +1,7 @@
 # Fynd worker pools for reproducing the marketprice.xyz dataset.
 #
 # Fynd fans every quote out to all pools and returns the best by
-# amount_out_net_gas, so two pools compete on every request:
+# amount_out_net_gas, so three pools compete on every request:
 #
 #   bellman_ford_2_hops  — proven single-path baseline. Fast; the bulk depth
 #                          sweep waits only for this (min_responses=1).
@@ -9,6 +9,9 @@
 #                          quotes when they beat the single path. Only the
 #                          handful of headline anchor quotes wait for it
 #                          (min_responses=0).
+#   water_fill           — splits an order across parallel routes to minimise
+#                          impact, and never returns less than the best single
+#                          path. Same min_responses=0 audience as PFW.
 #
 # The PFW task_queue_capacity is deliberately tiny (12): Fynd fans EVERY quote
 # to every pool, so an uncapped PFW queue would compute a ~1s split route
@@ -55,3 +58,30 @@ connector_tokens = [
     "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",  # USDC
     "0xdac17f958d2ee523a2206206994597c13d831ec7",  # USDT
 ]
+
+# Deliberately no connector_tokens: with no allowlist set, water_fill derives its
+# anchor preference from the live graph per solve (most-connected tokens plus the
+# native sentinel), which stays correct on every chain without configuration.
+# Pinning a list here would trade that away for the revert protection PFW needs
+# but water_fill does not — it tolerates stale gas prices and floors at the best
+# single path.
+#
+# timeout_ms and max_routes are far below the upstream benchmark example
+# (60000ms / 1024 routes), which is unusable at block cadence. Measured on
+# Ethereum mainnet, ETH/USDC, samples_per_side=100, 4 blocks each:
+#
+#   benchmark values   29-32s per snapshot, mixed_block 4/4, max 2 pools/route
+#   values below       2.5-3.0s,            mixed_block 0/4, max 5 pools/route
+#
+# The 60s budget makes every snapshot straddle a block boundary, so rungs get
+# dropped and the single-block guarantee is lost — slower *and* worse routes. The
+# queue cap matches PFW so the bulk sweep overflows cheaply and the budget goes
+# to the anchor quotes that actually wait for all pools (min_responses=0).
+[pools.water_fill]
+algorithm = "water_fill"
+num_workers = 4
+task_queue_capacity = 12
+min_hops = 1
+max_hops = 3
+timeout_ms = 200
+max_routes = 64
