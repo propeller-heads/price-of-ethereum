@@ -5,7 +5,7 @@ Fynd exposes three endpoints — `GET /v1/health`, `GET /v1/info`, `POST
 needs is for Fynd→Tycho, not caller→Fynd). This client is deliberately thin:
 build an `Order`, get a `Quote`, done.
 
-`quote()` defaults encoding ON (slippage 0.001, transfer_from) to match the mode
+`quote()` defaults encoding ON (slippage "0.001", transfer_from) to match the mode
 the hosted marketprice.xyz collector runs, so measured `amount_out` matches the
 site. Pass `encoding=False` for pure pricing with no calldata.
 """
@@ -35,8 +35,9 @@ from price_of_ethereum.fynd.models import (
 # non-zero address works for both pure-pricing and encoding-on quotes.
 DUMMY_SENDER = "0x0000000000000000000000000000000000000001"
 
-# Slippage tolerance as a fraction: 0.001 = 0.1%.
-DEFAULT_SLIPPAGE = 0.001
+# Slippage tolerance as a decimal string: "0.001" = 0.1%. Fynd requires a string
+# here, not a JSON number — see the note on `EncodingOptions.slippage`.
+DEFAULT_SLIPPAGE = "0.001"
 
 
 class FyndError(Exception):
@@ -115,7 +116,7 @@ class FyndClient:
         timeout_ms: int | None = None,
         max_gas: str | None = None,
         encoding: bool = True,
-        slippage: float = DEFAULT_SLIPPAGE,
+        slippage: str = DEFAULT_SLIPPAGE,
     ) -> Quote:
         """Solve one or more orders in a single request.
 

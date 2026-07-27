@@ -134,6 +134,31 @@ def test_spot_degraded_mid_when_everything_fails() -> None:
     assert snapshot.median_depth == ROBUST_MID_MIN_DEPTH
 
 
+def test_to_block_row_carries_every_summary_field() -> None:
+    with client_with(lambda order, body: None) as fynd:
+        snapshot = collect_snapshot(fynd, make_config())
+
+    assert snapshot.to_block_row() == {
+        "pair": "ETH/USDC",
+        "chain_id": 1,
+        "token_symbol": "WETH",
+        "numeraire_symbol": "USDC",
+        "block_number": amm_sim.BLOCK_NUMBER,
+        "block_hash": amm_sim.BLOCK_HASH,
+        "block_timestamp": amm_sim.BLOCK_TIMESTAMP,
+        "mixed_block": False,
+        "spot": snapshot.spot,
+        "robust_mid": snapshot.robust_mid,
+        "median_depth": snapshot.median_depth,
+        "mid_source": "sweep_band",
+        "gas_price_wei": str(amm_sim.GAS_PRICE_WEI),
+        "search_min": 50.0,
+        "search_max": 50_000_000.0,
+        "samples_per_side": 8,
+        "duration_ms": snapshot.duration_ms,
+    }
+
+
 def test_orphan_anchor_target_rejected_at_config_time() -> None:
     with pytest.raises(ValueError, match="anchor_targets"):
         make_config(impact_levels=(1.0,), anchor_targets=(5.0,))

@@ -185,6 +185,29 @@ class Snapshot:
             "mixed_block": self.mixed_block,
         }
 
+    def to_block_row(self) -> dict[str, Any]:
+        """One summary record per block: identity plus the per-block derived
+        values (`spot`, `robust_mid`, `median_depth`) and how the mid was won."""
+        return {
+            "pair": self.pair,
+            "chain_id": self.chain_id,
+            "token_symbol": self.token.symbol,
+            "numeraire_symbol": self.numeraire.symbol,
+            "block_number": self.block_number,
+            "block_hash": self.block_hash,
+            "block_timestamp": self.block_timestamp,
+            "mixed_block": self.mixed_block,
+            "spot": self.spot,
+            "robust_mid": self.robust_mid,
+            "median_depth": self.median_depth,
+            "mid_source": self.mid_source,
+            "gas_price_wei": self.gas_price_wei,
+            "search_min": self.search_min,
+            "search_max": self.search_max,
+            "samples_per_side": self.samples_per_side,
+            "duration_ms": self.duration_ms,
+        }
+
     def to_rows(self) -> list[dict[str, Any]]:
         """Flatten to storage rows: `kind="curve"` sweep rungs plus
         `kind="anchor"` level rows. Off-block rungs are excluded."""

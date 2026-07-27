@@ -6,7 +6,9 @@ Regenerate the block-level onchain price-and-depth data behind
 supports. Every number is a measured Fynd quote or a simple function of measured
 quotes. No oracles, no estimates — and nothing to trust but your own node.
 
-> Status: early. Stage 0 scaffold. See the staged plan in the commit history.
+> Status: the measurement method, collector, storage, CLI, dashboard and
+> notebooks are in place and covered by a golden parity test against the
+> production method. Not yet verified against live mainnet liquidity.
 
 ## Why
 
@@ -53,13 +55,82 @@ at the matching Tycho host.
 
 ## Quickstart
 
+```bash
+export TYCHO_API_KEY=<your-key>
+
+poe snapshot                       # measure one block, print its summary
+poe collect --blocks 50 --out data # record 50 blocks into JSONL
+poe serve  --out data              # live dashboard on http://127.0.0.1:8765
+poe report --out data --output report.html   # frozen, self-contained copy
+```
+
+`poe snapshot --help` lists the measurement knobs (`--pair`, `--token`,
+`--numeraire`, `--samples-per-side`, `--search-min/max`). `serve` and `report`
+read only what is already on disk — they never contact Fynd or Tycho.
+
+As a library:
+
 ```python
-# Coming in Stage 1+. The shape:
-from price_of_ethereum import FyndClient
+import os
+
+from price_of_ethereum import (
+    FyndClient, SnapshotConfig, TychoClient, collect_snapshot, resolve_tokens,
+)
+
+WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 
 fynd = FyndClient("http://127.0.0.1:3000")
 fynd.wait_until_ready()
-print(fynd.info().chain_id)
+tycho = TychoClient("https://tycho-beta.propellerheads.xyz", os.environ["TYCHO_API_KEY"])
+tokens = resolve_tokens(tycho, [WETH, USDC])
+
+snapshot = collect_snapshot(fynd, SnapshotConfig(
+    token=tokens[WETH.lower()],
+    numeraire=tokens[USDC.lower()],
+    pair="ETH/USDC",
+    chain_id=fynd.info().chain_id,
+))
+print(snapshot.robust_mid, snapshot.median_depth, snapshot.mid_source)
+rows = snapshot.to_rows()   # one dict per measured rung, curve + anchor
+```
+
+## What you get per block
+
+`spot` from a single $1,000 probe; `robust_mid` as the median of two-sided
+midpoints in the $2,500–$10,000 numeraire band (with dedicated-probe and
+spot fallbacks, reported in `mid_source`); a log-spaced cost curve on both
+sides; anchored measurements at the headline impact levels, solved waiting for
+every solver pool so split routes are captured; and per-rung route metadata.
+Block identity comes from the quotes themselves — the majority block labels the
+snapshot and `mixed_block` flags a straddle. There is no RPC client and no
+database anywhere in this package.
+
+## Dashboard
+
+`poe serve` renders the recorded JSONL and refreshes as new blocks land: cost
+curve, book map with the robust-mid band shaded, round-trip spread in bps, the
+anchored level table, and mid/depth/latency across blocks. Plotly ships inside
+the `viz` extra, so the page loads no external scripts and works offline.
+
+Run the collector and the dashboard side by side:
+
+```bash
+poe collect --out data &
+poe serve --out data
+```
+
+## Notebook
+
+[`examples/quickstart.ipynb`](./examples/quickstart.ipynb) walks the whole path:
+connect, one snapshot, what a measurement contains, the charts, where impact
+stops being monotonic, and recording a history. It calls the same figure
+builders the dashboard uses, so it draws exactly what `poe serve` draws — use
+the notebook to understand the data, the dashboard to watch it.
+
+```bash
+pip install "price-of-ethereum[viz]" jupyterlab   # or: uv sync --extra viz
+jupyter lab examples/quickstart.ipynb
 ```
 
 ## Development
