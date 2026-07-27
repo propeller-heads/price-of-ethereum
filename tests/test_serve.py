@@ -23,6 +23,8 @@ from price_of_ethereum.storage import append_jsonl
 BLOCK_ROW = {
     "pair": "ETH/USDC",
     "chain_id": 1,
+    "token_symbol": "WETH",
+    "numeraire_symbol": "USDC",
     "block_number": 21_000_000,
     "block_hash": "0xabc",
     "block_timestamp": 1_730_000_000,
@@ -123,6 +125,42 @@ def test_data_json_carries_figures_and_header(base_url: str) -> None:
     assert payload["provenance"]["blocks_recorded"] == 2
     assert payload["provenance"]["rows_latest_block"] == 2
     assert len(payload["figures"]["cost_curve"]["data"]) == 2  # one trace per side
+
+
+def test_data_json_honors_the_invert_flag(base_url: str) -> None:
+    upright = httpx.get(base_url + "/data.json?invert=0", timeout=10.0).json()
+    flipped = httpx.get(base_url + "/data.json?invert=1", timeout=10.0).json()
+
+    assert upright["view"] == {
+        "inverted": False,
+        "price_unit": "USDC per WETH",
+        "pair_label": "WETH/USDC",
+        "other_pair_label": "USDC/WETH",
+        "size_symbol": "USDC",
+        "numeraire_symbol": "USDC",
+        "token_symbol": "WETH",
+    }
+    assert flipped["view"]["inverted"] is True
+    assert flipped["view"]["price_unit"] == "WETH per USDC"
+    assert flipped["view"]["pair_label"] == "USDC/WETH"
+    assert flipped["view"]["other_pair_label"] == "WETH/USDC"
+    assert flipped["view"]["size_symbol"] == "WETH"
+    # Prices invert, sizes restate at the mid, block identity is untouched.
+    mid = upright["header"]["robust_mid"]
+    assert flipped["header"]["robust_mid"] == pytest.approx(1 / mid)
+    assert flipped["header"]["spot"] == pytest.approx(1 / upright["header"]["spot"])
+    assert flipped["header"]["block_number"] == upright["header"]["block_number"]
+    assert flipped["header"]["median_depth"] == pytest.approx(
+        upright["header"]["median_depth"] / mid
+    )
+
+
+def test_axis_units_use_real_token_symbols(base_url: str) -> None:
+    payload = httpx.get(base_url + "/data.json", timeout=10.0).json()
+    book_map = payload["figures"]["book_map"]["layout"]
+    assert book_map["yaxis"]["title"]["text"] == "execution price (USDC per WETH)"
+    assert book_map["xaxis"]["title"]["text"] == "size (USDC)"
+    assert "numeraire per token" not in json.dumps(payload)
 
 
 def test_plotly_bundle_is_served_locally(base_url: str) -> None:

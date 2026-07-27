@@ -17,6 +17,7 @@ from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 
@@ -67,7 +68,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # defaults, and a base install without the viz extra has no Plotly.
         from price_of_ethereum.dashboard import build_payload, render_page
 
-        route = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        route = parsed.path
         if route in ("/", "/index.html"):
             self._send(
                 render_page(title=self.title, poll_ms=self.poll_ms, payload=None, inline_js=False),
@@ -81,8 +83,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 extra_headers={"Cache-Control": "max-age=86400"},
             )
         elif route == "/data.json":
+            inverted = parse_qs(parsed.query).get("invert", ["0"])[0] in ("1", "true")
             rows, blocks = _read_frames(self.rows_path, self.blocks_path)
-            payload = build_payload(rows, blocks)
+            payload = build_payload(rows, blocks, inverted=inverted)
             self._send(
                 json.dumps(payload),
                 "application/json; charset=utf-8",
