@@ -1,8 +1,9 @@
-"""price-of-ethereum: reproduce marketprice.xyz's block-level price/depth data
-from your own local Fynd, for any token pair on any supported chain.
+"""Measure block-level onchain price and depth from your own Fynd instance, for
+any token pair on any chain Fynd supports.
 
-Public API is populated stage by stage (Fynd client first). Import surface is
-kept intentionally small and re-exported here.
+Every value this package reports is a Fynd quote or a documented function of
+quotes. The names below are the whole public API; submodules are implementation
+detail and may move.
 """
 
 from __future__ import annotations

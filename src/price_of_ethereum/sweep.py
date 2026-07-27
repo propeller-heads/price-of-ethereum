@@ -260,9 +260,9 @@ def derive_level_from_sweep(
     Measured impact is not strictly monotonic in size (route recomposition can
     dip impact as size grows), so scan for sign changes of (impact - target)
     between adjacent points and take the first crossing — "how much can you
-    trade before X%". One exception, pinned to the reference method: when the
-    smallest rung already exceeds the target, the level is a min bound even if
-    a later dip crosses back below. None when the sweep is empty.
+    trade before X%". One exception: when the smallest rung already exceeds the
+    target, the level is a min bound even if a later dip crosses back below —
+    nothing tradeable sits under the target. None when the sweep is empty.
     """
     if not sweep:
         return None

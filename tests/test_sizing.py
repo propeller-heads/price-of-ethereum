@@ -152,8 +152,8 @@ def test_full_eth_usdc_sizing_range() -> None:
     # End-to-end sizing sanity for ETH/USDC over $100..$50M at spot 2500.
     grid = numeraire_grid(100.0, 50_000_000.0, 100)
     rungs = size_rungs(grid, spot=2500.0, token_decimals=18, numeraire_decimals=6)
-    # Endpoints are exp(log(x)) — a few ULP off the exact bounds, matching the
-    # reference collector's grid — so compare at 1e-9 relative, not exactly.
+    # Endpoints are exp(log(x)), a few ULP off the exact bounds, so compare at
+    # 1e-9 relative rather than exactly.
     assert math.isclose(rungs[0].buy_amount, 100 * 10**6, rel_tol=1e-9)
     assert math.isclose(rungs[-1].buy_amount, atomic(50_000_000.0, 6), rel_tol=1e-9)
     # sell side: notional/spot WETH, e.g. $50M / 2500 = 20000 WETH at the top.

@@ -436,8 +436,8 @@ def _level_table(rows: pd.DataFrame, view: PriceView) -> list[dict[str, Any]]:
             elif column == "size_numeraire":
                 value = view.convert_size_value(value)
             elif column == "price_impact_bps":
-                # Stored rows keep bps — the reference method's unit, pinned by
-                # the golden test. Percent is shown because every figure does.
+                # Rows are stored in bps; percent is shown so the table reads
+                # in the same unit as every chart.
                 value = None if value is None else value / 100.0
             row[LEVEL_COLUMN_LABELS.get(column, column)] = value
         table.append(row)

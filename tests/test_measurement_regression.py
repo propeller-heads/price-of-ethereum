@@ -1,10 +1,14 @@
-"""Golden method-parity gate.
+"""Locks the measurement method to known-correct output.
 
-`tests/golden/reference_expected.json` was produced by running the reference
-marketprice.xyz collector (eth-price-poc-sdk checkout) against the exact AMM
-simulator in `tests/amm_sim.py`. Our clean-room implementation must reproduce
-the reference method's spot, robust_mid, median_depth, curve, levels, derived
-price-impact bps, and route metadata bit-for-bit.
+`tests/golden/expected_snapshot.json` records every value a snapshot of the
+deterministic AMM in `tests/amm_sim.py` must produce: spot, robust_mid,
+median_depth, the full two-sided curve, every anchored level, derived
+price-impact bps, and route metadata.
+
+Because the simulator is exact integer math, any difference here is a real change
+in how the method measures, not market noise. Nothing in this file touches a
+network or a live Fynd, so it fails loudly and reproducibly if the pricing,
+sizing, sweep, or reconciliation logic shifts.
 """
 
 from __future__ import annotations
@@ -21,7 +25,7 @@ from price_of_ethereum.pricing import derive_price_impact_bps
 from price_of_ethereum.snapshot import Snapshot
 from price_of_ethereum.sweep import Level
 
-FIXTURE = json.loads((Path(__file__).parent / "golden" / "reference_expected.json").read_text())
+FIXTURE = json.loads((Path(__file__).parent / "golden" / "expected_snapshot.json").read_text())
 
 WETH = TokenMeta(address=amm_sim.WETH_ADDRESS, symbol="WETH", decimals=18, quality=100, tax=0)
 USDC = TokenMeta(address=amm_sim.USDC_ADDRESS, symbol="USDC", decimals=6, quality=100, tax=0)
@@ -55,17 +59,17 @@ def levels_by_key(snapshot: Snapshot) -> dict[tuple[str, float], Level]:
     return {(level.side, level.target_impact_pct): level for level in snapshot.levels}
 
 
-def test_spot_matches_reference(snapshot: Snapshot) -> None:
+def test_spot_is_locked(snapshot: Snapshot) -> None:
     assert round(snapshot.spot, 6) == FIXTURE["spot_price"]
 
 
-def test_robust_mid_matches_reference(snapshot: Snapshot) -> None:
+def test_robust_mid_is_locked(snapshot: Snapshot) -> None:
     assert snapshot.robust_mid == FIXTURE["robust_mid"]
     assert snapshot.median_depth == FIXTURE["median_depth"]
     assert snapshot.mid_source == "sweep_band"
 
 
-def test_block_identity_matches_reference(snapshot: Snapshot) -> None:
+def test_block_identity_is_locked(snapshot: Snapshot) -> None:
     assert snapshot.block_number == FIXTURE["block_number"]
     assert snapshot.block_hash == FIXTURE["block_hash"]
     assert snapshot.block_timestamp == FIXTURE["block_timestamp"]
@@ -73,17 +77,17 @@ def test_block_identity_matches_reference(snapshot: Snapshot) -> None:
     assert snapshot.mixed_block == FIXTURE["mixed_block"]
 
 
-def test_curve_matches_reference(snapshot: Snapshot) -> None:
+def test_curve_is_locked(snapshot: Snapshot) -> None:
     for side, points in (("buy", snapshot.curve_buy), ("sell", snapshot.curve_sell)):
         ours = [(point.notional, point.price, point.impact_pct) for point in points]
         expected = [
             (entry["amount_usd"], entry["price"], entry["impact_pct"])
             for entry in FIXTURE["curve"][side]
         ]
-        assert ours == expected, f"curve {side} diverges from reference"
+        assert ours == expected, f"curve {side} changed"
 
 
-def test_levels_match_reference(snapshot: Snapshot) -> None:
+def test_levels_are_locked(snapshot: Snapshot) -> None:
     ours = levels_by_key(snapshot)
     assert len(ours) == len(FIXTURE["levels"])
     for expected in FIXTURE["levels"]:
@@ -97,7 +101,7 @@ def test_levels_match_reference(snapshot: Snapshot) -> None:
         assert level.derived_from == expected["derived_from"]
 
 
-def test_level_rows_derive_reference_bps_and_gas(snapshot: Snapshot) -> None:
+def test_level_rows_derive_bps_and_gas(snapshot: Snapshot) -> None:
     anchor_rows = {
         (row["side"], row["target_impact_pct"]): row
         for row in snapshot.to_rows()
@@ -109,7 +113,7 @@ def test_level_rows_derive_reference_bps_and_gas(snapshot: Snapshot) -> None:
         assert row["gas_cost_token_out"] == expected["gas_cost_token_out"]
 
 
-def test_level_routes_match_reference(snapshot: Snapshot) -> None:
+def test_level_routes_are_locked(snapshot: Snapshot) -> None:
     ours = levels_by_key(snapshot)
     for key, expected in FIXTURE["level_routes"].items():
         target_text, side = key.split("|")

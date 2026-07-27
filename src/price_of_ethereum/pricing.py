@@ -3,11 +3,10 @@
 Prices are numeraire units per token unit. `side` names the direction of the
 underlying quote: "buy" = numeraire -> token, "sell" = token -> numeraire.
 
-Math is float on purpose. These are display-grade measurements — exact to well
-past the 6 decimals they round to (float64 is exact to 2**53; the largest grid
-size is 5e13 atomic numeraire units) — and never amounts that sign or settle a
-transaction. Float keeps bit-for-bit parity with the marketprice.xyz collector,
-which the golden tests pin.
+Math is float on purpose: these are measurements for display and analysis,
+exact well past the six decimals they round to (float64 holds integers exactly to
+2**53, and the largest grid size is 5e13 atomic numeraire units). Amounts that
+sign or settle a transaction are sized in `sizing.py` with `Decimal` instead.
 """
 
 from __future__ import annotations

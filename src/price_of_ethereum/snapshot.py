@@ -385,9 +385,9 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                     )
                     break
 
-    # Majority-block reconciliation over every kept quote (level records first,
-    # then sweeps — levels share quote objects with sweep rungs, and the double
-    # count is intentional: it matches the reference collector's weighting).
+    # Majority-block reconciliation over every kept quote. Levels are counted
+    # before sweeps and share quote objects with sweep rungs, so an anchored
+    # level's block carries a little extra weight in the vote.
     all_quotes = [level.quote for level in levels]
     all_quotes += [point.quote for point in curve_buy]
     all_quotes += [point.quote for point in curve_sell]
