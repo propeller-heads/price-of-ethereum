@@ -180,9 +180,8 @@ class TestDeriveLevelFromSweep:
         assert level.notional == 100.0
 
     def test_first_rung_dip_stays_min_bound(self) -> None:
-        # Reference-method parity: when the smallest rung already exceeds the
-        # target, the level is a min bound even though a later dip crosses back
-        # below the target.
+        # When the smallest rung already exceeds the target, the level is a min
+        # bound even though a later dip crosses back below it.
         sweep = [make_point(100.0, 2.0), make_point(1000.0, 0.5), make_point(10_000.0, 3.0)]
         level = derive_level_from_sweep(sweep, side="buy", target_pct=1.0)
         assert level is not None

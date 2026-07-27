@@ -1,31 +1,36 @@
 # Price Of Ethereum SDK
 
-Regenerate the block-level onchain price-and-depth data behind
-[marketprice.xyz](https://marketprice.xyz) — locally, from your own
-[Fynd](https://docs.fynd.xyz) instance, for any token pair on any chain Fynd
-supports. Every number is a measured Fynd quote or a simple function of measured
-quotes. No oracles, no estimates — and nothing to trust but your own node.
+What does it actually cost to trade a token pair onchain, right now, at size?
+This measures it — block by block, from your own [Fynd](https://docs.fynd.xyz)
+instance, for any pair on any chain Fynd supports. Every number is a Fynd quote
+or a simple function of quotes. No oracles, no estimates, and nothing to trust
+but your own node.
 
-> Status: the measurement method, collector, storage, CLI, dashboard and
-> notebooks are in place and covered by a golden parity test against the
-> production method. Not yet verified against live mainnet liquidity.
+> Status: verified against Ethereum mainnet. Treat the API as unstable until 1.0.
 
 ## Why
 
-marketprice.xyz shows "the real price of Ethereum" — the actual cost to trade
-ETH at each block, with depth, routed across Tycho-indexed liquidity. This
-package lets anyone reproduce that data themselves instead of trusting the
-hosted site: point it at a local Fynd, sweep trade sizes across a block, and get
-tidy per-rung price/impact/route data as a DataFrame.
+A single "price" says nothing about what you can trade. The price to move $1,000
+and the price to move $5,000,000 differ by orders of magnitude, and both change
+every block as liquidity moves.
+
+So instead of quoting one number, this sweeps ~100 trade sizes per side across a
+single block and records what the router actually returns at each one: execution
+price, price impact, the pools routed through, and gas. The result is the shape
+of the market — a cost curve and a two-sided book — rather than a point estimate,
+and it arrives as a tidy DataFrame you can check yourself.
 
 ## Install
 
-```bash
-pip install price-of-ethereum          # plain pip works; uv is optional
-pip install "price-of-ethereum[viz]"   # + Plotly for the example notebooks
+Not on PyPI yet — install from the repository:
 
-uv add price-of-ethereum               # if you prefer uv
+```bash
+pip install "git+https://github.com/propeller-heads/price-of-ethereum"
+pip install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum"
 ```
+
+The `viz` extra adds Plotly, needed for the dashboard and the notebook. uv works
+too (`uv add "git+…"`) but nothing here requires it.
 
 ## Run a local Fynd
 
@@ -36,6 +41,7 @@ the Telegram bot [@fynd_portal_bot](https://t.me/fynd_portal_bot), then:
 # Cargo
 cargo install fynd
 export TYCHO_API_KEY=<your-key>
+curl -O https://raw.githubusercontent.com/propeller-heads/price-of-ethereum/main/worker_pools.toml
 fynd serve --chain ethereum --worker-pools-config worker_pools.toml
 
 # Docker
@@ -45,10 +51,11 @@ docker run -e TYCHO_API_KEY=<your-key> -p 3000:3000 \
   --worker-pools-config /worker_pools.toml
 ```
 
-Fynd cold-start hydration takes ~1–5 min; the SDK's `wait_until_ready()` polls
-`/v1/health` until it's serving. Ship the bundled [`worker_pools.toml`](./worker_pools.toml)
-so the split (`path_frank_wolfe`) and baseline (`bellman_ford`) solvers both run,
-matching the hosted deployment.
+Cold-start hydration takes ~1–5 min; `wait_until_ready()` polls `/v1/health`
+until Fynd is serving, and both CLI commands call it before measuring. Pass the
+bundled [`worker_pools.toml`](./worker_pools.toml) so all three solvers run — the
+`bellman_ford` baseline the bulk sweep waits on, plus `path_frank_wolfe` and
+`water_fill` for the split routes the anchored levels wait on.
 
 Other chains: `fynd serve --chain base` / `--chain unichain`, and point the SDK
 at the matching Tycho host.
@@ -109,9 +116,11 @@ database anywhere in this package.
 ## Dashboard
 
 `poe serve` renders the recorded JSONL and refreshes as new blocks land: cost
-curve, book map with the robust-mid band shaded, round-trip spread in bps, the
-anchored level table, and mid/depth/latency across blocks. Plotly ships inside
-the `viz` extra, so the page loads no external scripts and works offline.
+curve, book map with the robust-mid band shaded, round-trip spread as a percent of
+the mid, the anchored level table, and mid/depth/latency across blocks. Axes carry
+the real token symbols, and one button flips the whole view to the other side of
+the pair. Plotly ships inside the `viz` extra, so the page loads no external
+scripts and works offline.
 
 Run the collector and the dashboard side by side:
 
@@ -129,7 +138,7 @@ builders the dashboard uses, so it draws exactly what `poe serve` draws — use
 the notebook to understand the data, the dashboard to watch it.
 
 ```bash
-pip install "price-of-ethereum[viz]" jupyterlab   # or: uv sync --extra viz
+pip install jupyterlab            # alongside the viz extra above
 jupyter lab examples/quickstart.ipynb
 ```
 

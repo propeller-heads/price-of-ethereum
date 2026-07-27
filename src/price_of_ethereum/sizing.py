@@ -47,10 +47,9 @@ def numeraire_grid(min_notional: float, max_notional: float, samples: int) -> li
         raise ValueError("samples must be >= 1")
     if samples == 1 or min_notional == max_notional:
         return [min_notional] * samples
-    # Endpoints stay exp(log(x)) — a few ULP off the exact bounds — because the
-    # reference collector computes them that way and the golden parity tests
-    # pin its numbers; "fixing" the drift shifts endpoint rungs by one atomic
-    # unit and breaks parity.
+    # Endpoints are exp(log(x)), a few ULP off the exact bounds. Snapping them to
+    # the round number would shift those rungs by an atomic unit and change every
+    # recorded price at the ends of the grid, so the drift is kept deliberately.
     low = math.log(min_notional)
     high = math.log(max_notional)
     return [math.exp(low + (high - low) * i / (samples - 1)) for i in range(samples)]

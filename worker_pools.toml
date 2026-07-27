@@ -1,9 +1,9 @@
-# Fynd worker pools for reproducing the marketprice.xyz dataset.
+# Fynd worker pools tuned for per-block depth collection.
 #
 # Fynd fans every quote out to all pools and returns the best by
 # amount_out_net_gas, so three pools compete on every request:
 #
-#   bellman_ford_2_hops  — proven single-path baseline. Fast; the bulk depth
+#   bellman_ford_2_hops  — single-path baseline. Fast; the bulk depth
 #                          sweep waits only for this (min_responses=1).
 #   path_frank_wolfe     — split-routing solver. Returns multi-route "split"
 #                          quotes when they beat the single path. Only the

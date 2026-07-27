@@ -5,9 +5,10 @@ Fynd exposes three endpoints — `GET /v1/health`, `GET /v1/info`, `POST
 needs is for Fynd→Tycho, not caller→Fynd). This client is deliberately thin:
 build an `Order`, get a `Quote`, done.
 
-`quote()` defaults encoding ON (slippage "0.001", transfer_from) to match the mode
-the hosted marketprice.xyz collector runs, so measured `amount_out` matches the
-site. Pass `encoding=False` for pure pricing with no calldata.
+`quote()` defaults encoding ON (slippage "0.001", transfer_from), which returns
+executable calldata and a fee breakdown alongside the quote. `amount_out` is the
+same either way — it is gross of fees in both modes. Pass `encoding=False` for
+pricing only.
 """
 
 from __future__ import annotations

@@ -1,9 +1,9 @@
 """Deterministic constant-product AMM that fabricates Fynd order quotes.
 
-Shared by the golden-parity fixture generator (which runs the reference
-marketprice.xyz collector against this simulator over HTTP) and the repo tests
-(which serve it through an httpx.MockTransport) — both sides must see the exact
-same integer math for the golden numbers to be comparable.
+Served to the client through an `httpx.MockTransport` so tests exercise the real
+request and response path without a network. Every amount is exact integer math,
+so a snapshot of this pool is reproducible to the last wei and any change in a
+measured number means the method changed.
 """
 
 from __future__ import annotations
