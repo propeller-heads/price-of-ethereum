@@ -1,20 +1,24 @@
 # Price Of Ethereum SDK
 
-Regenerate the block-level onchain price-and-depth data behind
-[marketprice.xyz](https://marketprice.xyz) — locally, from your own
-[Fynd](https://docs.fynd.xyz) instance, for any token pair on any chain Fynd
-supports. Every number is a measured Fynd quote or a simple function of measured
-quotes. No oracles, no estimates — and nothing to trust but your own node.
+What does it actually cost to trade a token pair onchain, right now, at size?
+This measures it — block by block, from your own [Fynd](https://docs.fynd.xyz)
+instance, for any pair on any chain Fynd supports. Every number is a Fynd quote
+or a simple function of quotes. No oracles, no estimates, and nothing to trust
+but your own node.
 
 > Status: verified against Ethereum mainnet. Treat the API as unstable until 1.0.
 
 ## Why
 
-marketprice.xyz shows "the real price of Ethereum" — the actual cost to trade
-ETH at each block, with depth, routed across Tycho-indexed liquidity. This
-package lets anyone reproduce that data themselves instead of trusting the
-hosted site: point it at a local Fynd, sweep trade sizes across a block, and get
-tidy per-rung price/impact/route data as a DataFrame.
+A single "price" says nothing about what you can trade. The price to move $1,000
+and the price to move $5,000,000 differ by orders of magnitude, and both change
+every block as liquidity moves.
+
+So instead of quoting one number, this sweeps ~100 trade sizes per side across a
+single block and records what the router actually returns at each one: execution
+price, price impact, the pools routed through, and gas. The result is the shape
+of the market — a cost curve and a two-sided book — rather than a point estimate,
+and it arrives as a tidy DataFrame you can check yourself.
 
 ## Install
 

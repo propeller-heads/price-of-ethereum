@@ -1,6 +1,6 @@
 """Locks the measurement method to known-correct output.
 
-`tests/golden/expected_snapshot.json` records every value a snapshot of the
+`tests/fixtures/expected_snapshot.json` records every value a snapshot of the
 deterministic AMM in `tests/amm_sim.py` must produce: spot, robust_mid,
 median_depth, the full two-sided curve, every anchored level, derived
 price-impact bps, and route metadata.
@@ -25,7 +25,7 @@ from price_of_ethereum.pricing import derive_price_impact_bps
 from price_of_ethereum.snapshot import Snapshot
 from price_of_ethereum.sweep import Level
 
-FIXTURE = json.loads((Path(__file__).parent / "golden" / "expected_snapshot.json").read_text())
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "expected_snapshot.json").read_text())
 
 WETH = TokenMeta(address=amm_sim.WETH_ADDRESS, symbol="WETH", decimals=18, quality=100, tax=0)
 USDC = TokenMeta(address=amm_sim.USDC_ADDRESS, symbol="USDC", decimals=6, quality=100, tax=0)
