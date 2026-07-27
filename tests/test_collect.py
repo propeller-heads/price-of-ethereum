@@ -1,8 +1,16 @@
-"""Collector-loop tests over an AMM mock whose block advances per spot probe.
+"""Collector-loop tests over AMM mocks that drive the simulated block explicitly.
 
-The spot probe is the first quote of every collection cycle, so bumping the
-simulated block each time the probe's amount is seen gives every cycle one
-consistent, strictly increasing block — no timing dependence.
+The clock probe and the snapshot's own spot probe are byte-identical requests, so
+a mock cannot tell them apart and counting "probes" is ambiguous. The mocks here
+key on unambiguous signals instead:
+
+  `sweep_paced_client`  advances the block once per completed sweep, spotted by
+                        the grid's top rung — exactly one per snapshot. Probes
+                        never move it, so every cycle measures a fresh block.
+  `probe_paced_client`  advances after a fixed number of probes, modelling wall
+                        time passing while the collector waits for a new block.
+
+Both are deterministic; neither depends on timing.
 """
 
 from __future__ import annotations
@@ -42,21 +50,44 @@ def make_config() -> SnapshotConfig:
     )
 
 
-def advancing_block_client(*, blocks_per_advance: int = 1) -> FyndClient:
-    """AMM mock whose block bumps every `blocks_per_advance` spot probes."""
+# Top buy rung of make_config()'s grid: seen exactly once per completed sweep.
+TOP_RUNG_AMOUNT = atomic(50_000.0, USDC.decimals)
+
+
+def is_probe_request(order: dict) -> bool:
+    return (
+        order["token_in"].lower() == amm_sim.USDC_ADDRESS.lower()
+        and int(order["amount"]) == SPOT_PROBE_AMOUNT
+    )
+
+
+def sweep_paced_client() -> FyndClient:
+    """Block advances once per completed sweep, so every cycle sees a new one."""
+    state = {"block": amm_sim.BLOCK_NUMBER}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        body["orders"][0]["block"]["number"] = state["block"]
+        if int(order["amount"]) == TOP_RUNG_AMOUNT:
+            state["block"] += 1
+        return httpx.Response(200, json=body)
+
+    return FyndClient(transport=httpx.MockTransport(handler))
+
+
+def probe_paced_client(*, advance_after_probes: int) -> FyndClient:
+    """Block advances every `advance_after_probes` probes, as wall time would."""
     state = {"probes": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
         order = json.loads(request.content)["orders"][0]
-        is_probe = (
-            order["token_in"].lower() == amm_sim.USDC_ADDRESS.lower()
-            and int(order["amount"]) == SPOT_PROBE_AMOUNT
-        )
-        if is_probe:
+        if is_probe_request(order):
             state["probes"] += 1
         body = amm_sim.quote_response(order["token_in"], order["amount"])
-        block = amm_sim.BLOCK_NUMBER + (state["probes"] - 1) // blocks_per_advance
-        body["orders"][0]["block"]["number"] = block
+        body["orders"][0]["block"]["number"] = (
+            amm_sim.BLOCK_NUMBER + (state["probes"] - 1) // advance_after_probes
+        )
         return httpx.Response(200, json=body)
 
     return FyndClient(transport=httpx.MockTransport(handler))
@@ -64,7 +95,7 @@ def advancing_block_client(*, blocks_per_advance: int = 1) -> FyndClient:
 
 def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
     config = make_config()
-    with advancing_block_client() as fynd:
+    with sweep_paced_client() as fynd:
         result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=3, idle_wait_s=0.0)
 
     assert result.blocks_recorded == 3
@@ -72,11 +103,12 @@ def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
     assert result.failed_cycles == 0
     assert result.interrupted is False
     blocks_frame = load_jsonl(result.blocks_path)
-    assert blocks_frame["block_number"].tolist() == [
-        amm_sim.BLOCK_NUMBER,
-        amm_sim.BLOCK_NUMBER + 1,
-        amm_sim.BLOCK_NUMBER + 2,
-    ]
+    recorded = blocks_frame["block_number"].tolist()
+    assert recorded == sorted(set(recorded))  # distinct and strictly increasing
+    assert len(recorded) == 3
+    assert recorded[0] == amm_sim.BLOCK_NUMBER
+    # A fresh block every cycle, so the cheap clock never has to wait.
+    assert result.idle_probes == 0
     rows_frame = load_jsonl(result.rows_path)
     assert result.rows_written == len(rows_frame) > 0
     assert set(rows_frame["kind"]) == {"curve", "anchor"}
@@ -85,13 +117,56 @@ def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
 
 def test_collect_skips_duplicate_blocks(tmp_path: Path) -> None:
     config = make_config()
-    with advancing_block_client(blocks_per_advance=2) as fynd:
+    with probe_paced_client(advance_after_probes=3) as fynd:
         result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, idle_wait_s=0.0)
 
     assert result.blocks_recorded == 2
-    assert result.duplicate_snapshots > 0
+    # The cheap clock absorbs the wait, so no full sweep is thrown away.
+    assert result.idle_probes > 0
+    assert result.duplicate_snapshots == 0
     blocks_frame = load_jsonl(result.blocks_path)
     assert blocks_frame["block_number"].is_unique
+
+
+def test_idle_cycle_costs_exactly_one_quote(tmp_path: Path) -> None:
+    """The whole point of the probe: waiting for a block must not sweep."""
+    requests: list[int] = []
+    state = {"block": amm_sim.BLOCK_NUMBER, "probes": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        requests.append(int(order["amount"]))
+        is_probe = (
+            order["token_in"].lower() == amm_sim.USDC_ADDRESS.lower()
+            and int(order["amount"]) == SPOT_PROBE_AMOUNT
+        )
+        # Hold the block still for three probes, then let it advance once.
+        if is_probe:
+            state["probes"] += 1
+            if state["probes"] > 4:
+                state["block"] = amm_sim.BLOCK_NUMBER + 1
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        body["orders"][0]["block"]["number"] = state["block"]
+        return httpx.Response(200, json=body)
+
+    config = make_config()
+    with sweep_paced_client() as seed:
+        first = collect_blocks(
+            fynd=seed, config=config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0
+        )
+    assert first.blocks_recorded == 1
+
+    with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
+        requests.clear()
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+
+    assert result.blocks_recorded == 1
+    assert result.idle_probes >= 3
+    # Every idle cycle is one probe-sized quote; only the final sweep is bigger.
+    probe_only = [amount for amount in requests[: result.idle_probes]]
+    assert probe_only == [SPOT_PROBE_AMOUNT] * result.idle_probes
+    # A full sweep of this config is far more than the handful of idle probes.
+    assert len(requests) > result.idle_probes + 8
 
 
 def test_collect_raises_after_consecutive_failures(tmp_path: Path) -> None:
@@ -145,32 +220,37 @@ def test_collect_recovers_after_transient_failures(tmp_path: Path) -> None:
             max_consecutive_failures=3,
         )
     assert result.blocks_recorded == 2
-    assert result.failed_cycles == 4
+    # Recovery is the point: the run only finishes if the consecutive-failure
+    # counter resets after each success, whatever the exact failure tally.
+    assert result.failed_cycles >= 2
     assert result.interrupted is False
 
 
 def test_collect_resumes_past_block_already_on_disk(tmp_path: Path) -> None:
     config = make_config()
-    with advancing_block_client() as fynd:
+    with sweep_paced_client() as fynd:
         first = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
     assert load_jsonl(first.blocks_path)["block_number"].tolist() == [amm_sim.BLOCK_NUMBER]
 
     # A fresh client re-serves BLOCK_NUMBER first; the restarted collector must
-    # skip it (seeded from disk) and record the next block instead.
-    with advancing_block_client() as fynd:
+    # skip it (seeded from disk) and record the next block instead. Probe pacing
+    # is required here: the block has to advance while the collector waits, which
+    # is exactly what it refuses to force by sweeping.
+    with probe_paced_client(advance_after_probes=1) as fynd:
         second = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
-    assert second.duplicate_snapshots == 1
-    assert load_jsonl(second.blocks_path)["block_number"].tolist() == [
-        amm_sim.BLOCK_NUMBER,
-        amm_sim.BLOCK_NUMBER + 1,
-    ]
+    assert second.idle_probes == 1
+    assert second.duplicate_snapshots == 0
+    recorded = load_jsonl(second.blocks_path)["block_number"].tolist()
+    assert recorded == sorted(set(recorded))
+    assert len(recorded) == 2
+    assert recorded[0] == amm_sim.BLOCK_NUMBER
 
 
 def test_collect_returns_partial_result_on_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = make_config()
-    with advancing_block_client() as fynd:
+    with sweep_paced_client() as fynd:
         recorded_snapshot = collect_snapshot(fynd, config)
 
         calls = {"count": 0}

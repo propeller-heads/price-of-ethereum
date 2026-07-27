@@ -183,7 +183,8 @@ def run_collect(
     result = collect_blocks(fynd, config, out_dir=args.out, blocks=args.blocks)
     print(
         f"recorded {result.blocks_recorded} blocks ({result.rows_written} rows) "
-        f"to {result.rows_path}; {result.duplicate_snapshots} duplicate snapshots, "
+        f"to {result.rows_path}; {result.idle_probes} idle probes, "
+        f"{result.duplicate_snapshots} duplicate snapshots, "
         f"{result.failed_cycles} failed cycles",
         file=sys.stderr,
     )
