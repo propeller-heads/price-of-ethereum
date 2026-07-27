@@ -1,4 +1,4 @@
-# price-of-ethereum
+# Price Of Ethereum SDK
 
 Regenerate the block-level onchain price-and-depth data behind
 [marketprice.xyz](https://marketprice.xyz) — locally, from your own
