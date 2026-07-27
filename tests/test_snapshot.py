@@ -141,6 +141,8 @@ def test_to_block_row_carries_every_summary_field() -> None:
     assert snapshot.to_block_row() == {
         "pair": "ETH/USDC",
         "chain_id": 1,
+        "token_symbol": "WETH",
+        "numeraire_symbol": "USDC",
         "block_number": amm_sim.BLOCK_NUMBER,
         "block_hash": amm_sim.BLOCK_HASH,
         "block_timestamp": amm_sim.BLOCK_TIMESTAMP,

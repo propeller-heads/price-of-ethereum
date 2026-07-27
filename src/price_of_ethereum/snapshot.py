@@ -191,6 +191,8 @@ class Snapshot:
         return {
             "pair": self.pair,
             "chain_id": self.chain_id,
+            "token_symbol": self.token.symbol,
+            "numeraire_symbol": self.numeraire.symbol,
             "block_number": self.block_number,
             "block_hash": self.block_hash,
             "block_timestamp": self.block_timestamp,
