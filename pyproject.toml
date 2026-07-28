@@ -64,10 +64,15 @@ required-version = "==0.11.32"
 source-include = ["examples/**", "specs/**", "tests/**"]
 
 [dependency-groups]
+# ruff and ty are pinned rather than floored: they decide whether `ruff format
+# --check` and `ty check` pass, and CI runs the versions in uv.lock. A pip user
+# installing from these floors would otherwise get a newer formatter and see a
+# failure on a file they never edited. pytest only runs the suite, so a floor
+# is enough.
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.22",
-    "ty>=0.0.61",
+    "ruff==0.15.22",
+    "ty==0.0.61",
 ]
 
 [tool.ruff]

@@ -25,6 +25,7 @@ import sys
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
 
+from price_of_ethereum import __version__
 from price_of_ethereum.collect import (
     CollectionAbortedError,
     collect_blocks,
@@ -66,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Measure block-level onchain price and depth from your own local Fynd.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument("--version", action="version", version=f"poe {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for name, help_text in (

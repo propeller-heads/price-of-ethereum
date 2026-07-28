@@ -19,6 +19,31 @@ into the lockfile, and CI, which has no such file, then re-resolves and fails
 `--locked` with "Resolving despite existing lockfile due to removal of global
 exclude newer".
 
+### Without uv
+
+uv is how CI builds and how the lockfile is maintained, but nothing here needs
+it. The equivalent setup, and the same four checks as plain console scripts:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[data,viz,parquet]" --group dev   # pip >= 25.1
+
+ruff check
+ruff format --check
+ty check
+pytest
+```
+
+Three details this route depends on. Install all three extras — `parquet` is in
+`--all-extras` and the suite covers parquet conversion, so leaving it out fails
+one test. Activate the virtualenv rather than running `.venv/bin/ty`, which
+resolves imports against whatever environment is active and otherwise reports
+every third-party import as unresolved. And `ruff` and `ty` are pinned to exact
+versions in `[dependency-groups]` so pip installs what CI runs; a newer `ruff`
+formats files this one leaves alone.
+
+Regenerating `uv.lock` is the one task that genuinely requires uv.
+
 ## Checks
 
 Run all four before opening a PR — CI runs the same commands:
