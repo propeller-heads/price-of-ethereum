@@ -3,13 +3,19 @@ from the vendored spec (`specs/tycho.openapi.json`, v0.333.1).
 
 Only `/v1/tokens` and `/v1/health` are modeled — the SDK uses Tycho solely to
 resolve token metadata (decimals/symbol/quality/tax) for arbitrary pairs.
+
+`Chain` stays a closed `Literal` where the SDK *chooses* the value (the client's
+chain binding, `cli.CHAIN_TYCHO_HOSTS`), so those stay type-checked. Values the
+SDK *receives* — a token's chain, the health state — are plain `str` with the
+known members kept in module-level constants, so a Tycho release that adds a
+chain or a health state parses normally instead of raising.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 Chain = Literal[
     "ethereum",
@@ -21,6 +27,9 @@ Chain = Literal[
     "unichain",
     "polygon",
 ]
+
+HEALTH_STATUS_READY = "Ready"
+KNOWN_HEALTH_STATUSES = frozenset({HEALTH_STATUS_READY, "Starting", "NotReady"})
 
 
 class PaginationParams(BaseModel):
@@ -43,13 +52,22 @@ class TokensRequestBody(BaseModel):
 
 
 class ResponseToken(BaseModel):
-    chain: Chain
+    chain: str
     address: str
     symbol: str
     decimals: int
     tax: int
     gas: list[int | None]
     quality: int
+
+    @field_validator("chain", mode="before")
+    @classmethod
+    def _flatten_custom_chain(cls, value: str | dict[str, str]) -> str | dict[str, str]:
+        # The spec's `Chain` has a `{"custom": "<name>"}` variant alongside the
+        # named strings; flatten it so a token on a custom chain still resolves.
+        if isinstance(value, dict) and "custom" in value:
+            return value["custom"]
+        return value
 
 
 class TokensRequestResponse(BaseModel):
@@ -58,9 +76,11 @@ class TokensRequestResponse(BaseModel):
 
 
 class Health(BaseModel):
-    status: Literal["Ready", "Starting", "NotReady"]
+    status: str
     message: str | None = None
 
     @property
     def ready(self) -> bool:
-        return self.status == "Ready"
+        """True only for the exact ready state. Any state this SDK predates is
+        reported as not-ready, so callers keep polling rather than proceed."""
+        return self.status == HEALTH_STATUS_READY

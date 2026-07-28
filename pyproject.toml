@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
-    { name = "pistomat", email = "pistomat@users.noreply.github.com" }
+    { name = "PropellerHeads" }
 ]
 keywords = ["defi", "ethereum", "market-data", "price-impact", "liquidity", "tycho", "fynd"]
 classifiers = [
@@ -22,13 +22,21 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
-    "pandas>=3.0.3",
-    "pyarrow>=25.0.0",
     "pydantic>=2",
 ]
 
 [project.optional-dependencies]
+data = [
+    "pandas>=2.0",
+]
+parquet = [
+    "price-of-ethereum[data]",
+    # pandas drives the parquet engine and declares pyarrow>=13 for it, so that
+    # is the real floor; anything higher would be an invented constraint.
+    "pyarrow>=13",
+]
 viz = [
+    "price-of-ethereum[data]",
     "plotly>=6.9.0",
 ]
 
@@ -36,6 +44,7 @@ viz = [
 Homepage = "https://github.com/propeller-heads/price-of-ethereum"
 Repository = "https://github.com/propeller-heads/price-of-ethereum"
 Issues = "https://github.com/propeller-heads/price-of-ethereum/issues"
+LiveSite = "https://marketprice.xyz/"
 
 [project.scripts]
 poe = "price_of_ethereum.cli:main"
@@ -44,11 +53,21 @@ poe = "price_of_ethereum.cli:main"
 requires = ["uv_build>=0.11.21,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv]
+# CI syncs with --locked, which requires the lockfile to match the format the
+# running uv expects, and that format changes between uv releases. Pinning here
+# rather than in the workflow keeps CI and contributors on the one uv that wrote
+# uv.lock; setup-uv reads this field. Bump it and re-lock in the same commit.
+required-version = "==0.11.32"
+
+[tool.uv.build-backend]
+source-include = ["examples/**", "specs/**", "tests/**"]
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
-    "ruff>=0.15.21",
-    "ty>=0.0.60",
+    "ruff>=0.15.22",
+    "ty>=0.0.61",
 ]
 
 [tool.ruff]

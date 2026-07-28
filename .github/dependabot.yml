@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  # Keeps the SHA pins in .github/workflows fresh. Without this, pinning to a
+  # commit means never picking up an upstream security fix.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # A compromised release is usually yanked within days. Waiting before
+    # opening the bump PR keeps us off the leading edge of that window.
+    cooldown:
+      default-days: 7
+    groups:
+      python-dev:
+        dependency-type: development
+        patterns: ["*"]
+      python-runtime:
+        dependency-type: production
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore"

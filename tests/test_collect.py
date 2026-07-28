@@ -23,7 +23,12 @@ import pytest
 
 import amm_sim
 from price_of_ethereum import FyndClient, SnapshotConfig, TokenMeta
-from price_of_ethereum.collect import CollectionAbortedError, collect_blocks, output_paths
+from price_of_ethereum.collect import (
+    CollectionAbortedError,
+    collect_blocks,
+    output_paths,
+    probe_block,
+)
 from price_of_ethereum.sizing import atomic
 from price_of_ethereum.snapshot import collect_snapshot
 from price_of_ethereum.storage import load_jsonl
@@ -91,6 +96,22 @@ def probe_paced_client(*, advance_after_probes: int) -> FyndClient:
         return httpx.Response(200, json=body)
 
     return FyndClient(transport=httpx.MockTransport(handler))
+
+
+def test_probe_block_never_asks_for_encoding() -> None:
+    """The idle poll runs once per `idle_wait_s` and reads only a block number."""
+    payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        order = payload["orders"][0]
+        return httpx.Response(200, json=amm_sim.quote_response(order["token_in"], order["amount"]))
+
+    with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
+        assert probe_block(fynd, make_config()) == amm_sim.BLOCK_NUMBER
+    assert len(payloads) == 1
+    assert "encoding_options" not in payloads[0]["options"]
 
 
 def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
@@ -184,8 +205,8 @@ def test_collect_raises_after_consecutive_failures(tmp_path: Path) -> None:
         collect_blocks(
             fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0, max_consecutive_failures=3
         )
-    rows_path, blocks_path = output_paths(tmp_path, config)
-    assert not rows_path.exists() and not blocks_path.exists()
+    rows_path, blocks_path, anchors_path = output_paths(tmp_path, config)
+    assert not rows_path.exists() and not blocks_path.exists() and not anchors_path.exists()
 
 
 def test_collect_recovers_after_transient_failures(tmp_path: Path) -> None:
@@ -269,7 +290,87 @@ def test_collect_returns_partial_result_on_interrupt(
     assert load_jsonl(result.blocks_path)["block_number"].tolist() == [amm_sim.BLOCK_NUMBER]
 
 
+def test_collect_writes_anchor_proof_to_its_own_file(tmp_path: Path) -> None:
+    # The headline levels have to reach 1% impact for the bisection to run, so
+    # this config sweeps the full default range instead of make_config()'s.
+    config = SnapshotConfig(
+        token=WETH,
+        numeraire=USDC,
+        pair="ETH/USDC",
+        chain_id=1,
+        samples_per_side=12,
+        impact_levels=(1.0,),
+        anchor_targets=(1.0,),
+        max_workers=4,
+    )
+    router = "0x" + "cd" * 20
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        order = payload["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        if "encoding_options" in payload["options"]:
+            body["orders"][0]["transaction"] = {"to": router, "value": "0", "data": "0xdeadbeef"}
+        return httpx.Response(200, json=body)
+
+    with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+
+    assert result.blocks_recorded == 1
+    assert result.anchors_written == 2  # one headline target, both sides
+    assert result.anchors_path.name.endswith(".anchors.jsonl")
+    anchors = load_jsonl(result.anchors_path)
+    assert sorted(anchors["side"]) == ["buy", "sell"]
+    assert anchors["transaction_to"].tolist() == [router, router]
+    # The collector quotes with FyndClient's default sender, which owns nothing,
+    # so the links open but cannot simulate — that is what the status says.
+    assert anchors["tenderly_status"].tolist() == ["placeholder_sender"] * 2
+    # Fynd sent no fee breakdown, so absence is recorded rather than faked.
+    assert anchors["router_fee"].isna().all()
+    assert "transaction_data" not in load_jsonl(result.rows_path).columns
+
+
 def test_output_paths_slug(tmp_path: Path) -> None:
-    rows_path, blocks_path = output_paths(tmp_path, make_config())
+    rows_path, blocks_path, anchors_path = output_paths(tmp_path, make_config())
     assert rows_path.name == "eth-usdc_1.rows.jsonl"
     assert blocks_path.name == "eth-usdc_1.blocks.jsonl"
+    assert anchors_path.name == "eth-usdc_1.anchors.jsonl"
+
+
+def test_anchors_accumulate_across_blocks(tmp_path: Path) -> None:
+    # The single-block case cannot catch a truncating write or a counter that
+    # fails to carry, so cross a block boundary with anchoring switched on.
+    config = SnapshotConfig(
+        token=WETH,
+        numeraire=USDC,
+        pair="ETH/USDC",
+        chain_id=1,
+        samples_per_side=12,
+        impact_levels=(1.0,),
+        anchor_targets=(1.0,),
+        max_workers=4,
+    )
+    router = "0x" + "cd" * 20
+    state = {"probes": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        order = payload["orders"][0]
+        if is_probe_request(order):
+            state["probes"] += 1
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        body["orders"][0]["block"]["number"] = amm_sim.BLOCK_NUMBER + state["probes"]
+        if "encoding_options" in payload["options"]:
+            body["orders"][0]["transaction"] = {"to": router, "value": "0", "data": "0xdeadbeef"}
+        return httpx.Response(200, json=body)
+
+    with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, idle_wait_s=0.0)
+
+    assert result.blocks_recorded == 2
+    assert result.anchors_written == 4  # one target, both sides, two blocks
+    anchors = load_jsonl(result.anchors_path)
+    assert len(anchors) == 4
+    assert anchors["block_number"].nunique() == 2
+    for _, per_block in anchors.groupby("block_number"):
+        assert sorted(per_block["side"]) == ["buy", "sell"]

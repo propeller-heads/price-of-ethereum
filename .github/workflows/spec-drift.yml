@@ -1,0 +1,59 @@
+# Watches the upstream Fynd and Tycho OpenAPI documents for changes against the
+# specs vendored in specs/.
+#
+# A failure here is NOT a production incident and does not mean the SDK is
+# broken. It means an upstream service shipped a release and our vendored copy
+# is now stale, so someone should re-vendor it. Nothing about a released
+# version of this package changes when this job goes red.
+#
+# This is deliberately the only workflow that reaches PropellerHeads-hosted
+# infrastructure. The same check is skipped in the normal test run, so pull
+# requests -- including those from forks -- stay hermetic.
+name: Upstream spec drift
+
+on:
+  schedule:
+    # Wednesdays, offset from the CodeQL schedule so the two never contend.
+    - cron: "43 6 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  check-upstream-specs:
+    name: Compare vendored specs against upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      # No --all-extras: these tests import only httpx, pytest and the client
+      # models, so pandas, pyarrow and plotly stay out of this job entirely.
+      - name: Sync
+        run: uv sync --dev --locked
+
+      - name: Compare vendored specs against upstream
+        env:
+          POE_LIVE_SPEC_CHECK: "1"
+        run: uv run pytest tests/test_specs.py
+
+      - name: Explain the failure
+        if: failure()
+        run: |
+          echo "::error title=Vendored OpenAPI specs are stale::Upstream Fynd or Tycho moved, or was unreachable. This is a maintenance signal, not a production alarm, and no released version of this package is affected. Re-vendor the changed document into specs/ and re-run; the offline contract tests in tests/test_specs.py say whether anything the SDK actually depends on moved."
+
+      - name: Confirm no drift
+        if: success()
+        run: echo "::notice title=Vendored specs match upstream::No drift between specs/ and the upstream Fynd and Tycho OpenAPI documents."

@@ -11,6 +11,8 @@ import httpx
 import pytest
 
 from price_of_ethereum.fynd import DUMMY_SENDER, FyndClient, FyndError, Order
+from price_of_ethereum.fynd.models import KNOWN_QUOTE_STATUSES, QUOTE_STATUS_SUCCESS
+from price_of_ethereum.sizing import SpotProbeError, spot_price
 
 HEALTHY = {
     "healthy": True,
@@ -251,6 +253,30 @@ def test_wait_until_ready_times_out() -> None:
     client, _ = client_with({("GET", "/v1/health"): (503, STALE)})
     with pytest.raises(TimeoutError):
         client.wait_until_ready(timeout_s=0.05, poll_interval_s=0.01, poll_timeout_s=0.05)
+
+
+UNKNOWN_STATUS_ORDER = {
+    "orders": [{**NO_ROUTE_ORDER["orders"][0], "status": "solver_pool_drained"}],
+    "total_gas_estimate": "0",
+    "solve_time_ms": 5,
+}
+
+
+def test_quote_status_the_sdk_has_never_seen_parses() -> None:
+    # A Fynd release that adds a QuoteStatus must not void the whole response.
+    client, _ = client_with({("POST", "/v1/quote"): (200, UNKNOWN_STATUS_ORDER)})
+    quote = client.quote(client.build_order(WETH, USDC, 10**18))
+    (order_quote,) = quote.orders
+    assert order_quote.status == "solver_pool_drained"
+    assert order_quote.status not in KNOWN_QUOTE_STATUSES
+    assert order_quote.status != QUOTE_STATUS_SUCCESS
+    assert order_quote.route is None
+
+
+def test_unknown_quote_status_is_rejected_rather_than_priced() -> None:
+    client, _ = client_with({("POST", "/v1/quote"): (200, UNKNOWN_STATUS_ORDER)})
+    with pytest.raises(SpotProbeError, match="solver_pool_drained"):
+        spot_price(client, token=WETH, token_decimals=18, numeraire=USDC, numeraire_decimals=6)
 
 
 def test_wait_until_ready_retries_after_transport_error() -> None:

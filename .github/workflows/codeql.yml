@@ -1,0 +1,55 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Newly published queries find bugs in code that has not changed, so the
+  # scheduled run is the one that catches them.
+  schedule:
+    - cron: "27 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    # Code scanning needs Code Security, which a private repository only has
+    # under Advanced Security. Without it the analysis runs to completion and
+    # then fails uploading its results, which is a red check nobody can act on.
+    # Skipping while private starts this automatically once the repository is
+    # public, where code scanning is free. A missing field means an event that
+    # carries no repository payload, and running is the safe reading of that.
+    if: github.event.repository.private != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Reads this run's own metadata through the workflow-runs API, which the
+      # default token cannot see while the repository is private. Harmless once
+      # it is public, where the same call needs no grant.
+      actions: read
+      # Uploads the SARIF results to the code scanning API. The only write
+      # scope in this repository.
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          languages: python
+          build-mode: none
+          queries: security-extended
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          category: "/language:python"

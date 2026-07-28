@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from price_of_ethereum.tycho import TychoClient, TychoError
+from price_of_ethereum.tycho.models import HEALTH_STATUS_READY, KNOWN_HEALTH_STATUSES
 
 USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
 WETH = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
@@ -47,11 +48,51 @@ def client_with(pages: list[dict], *, api_key: str = "secret") -> tuple[TychoCli
     return client, stub
 
 
+def health_client(body: dict) -> TychoClient:
+    return TychoClient(
+        "https://tycho.test",
+        "k",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)),
+    )
+
+
 def test_health_ready() -> None:
     client, _ = client_with([])
     health = client.health()
     assert health.ready
-    assert health.status == "Ready"
+    assert health.status == HEALTH_STATUS_READY
+
+
+def test_health_state_the_sdk_has_never_seen_parses_as_not_ready() -> None:
+    # A Tycho release that adds a health state must not turn a readiness poll
+    # into a crash — an unknown state is simply not ready.
+    health = health_client({"status": "Reindexing", "message": "catching up"}).health()
+    assert health.status == "Reindexing"
+    assert health.status not in KNOWN_HEALTH_STATUSES
+    assert not health.ready
+    assert health.message == "catching up"
+
+
+def test_token_on_a_chain_the_sdk_has_never_seen_parses() -> None:
+    page = {
+        "tokens": [{**token_row(USDC, "USDC", 6), "chain": "monad"}],
+        "pagination": {"page": 0, "page_size": 100, "total": 1},
+    }
+    client, _ = client_with([page])
+    (token,) = client.tokens(addresses=[USDC])
+    assert token.chain == "monad"
+    assert token.decimals == 6
+
+
+def test_token_on_a_custom_chain_is_flattened() -> None:
+    # The spec's Chain has a {"custom": "<name>"} variant next to the named ones.
+    page = {
+        "tokens": [{**token_row(USDC, "USDC", 6), "chain": {"custom": "devnet"}}],
+        "pagination": {"page": 0, "page_size": 100, "total": 1},
+    }
+    client, _ = client_with([page])
+    (token,) = client.tokens(addresses=[USDC])
+    assert token.chain == "devnet"
 
 
 def test_tokens_single_page() -> None:
@@ -104,11 +145,7 @@ def test_non_200_raises_tychoerror() -> None:
     [("Starting", "warming up"), ("NotReady", "No db connection")],
 )
 def test_health_not_ready_variants(status: str, message: str) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"status": status, "message": message})
-
-    client = TychoClient("https://tycho.test", "k", transport=httpx.MockTransport(handler))
-    health = client.health()
+    health = health_client({"status": status, "message": message}).health()
     assert not health.ready
     assert health.message == message
 
