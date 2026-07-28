@@ -25,12 +25,20 @@ and it arrives as a tidy DataFrame you can check yourself.
 
 ## Install
 
-This package is not distributed on a package index. Install it from the
-repository:
+This package is not distributed on a package index; install it from the
+repository. [uv](https://docs.astral.sh/uv/) is what this project is built and
+tested with, and `uv tool install` puts the `poe` command on your PATH in its
+own environment:
 
 ```bash
-pip install "git+https://github.com/propeller-heads/price-of-ethereum"
-pip install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum"
+uv tool install "git+https://github.com/propeller-heads/price-of-ethereum"
+uv tool install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum"
+```
+
+To use it as a library from your own project, add it there instead:
+
+```bash
+uv add "git+https://github.com/propeller-heads/price-of-ethereum"
 ```
 
 Nothing is tagged yet, so there is no released version to pin to; append
@@ -46,13 +54,23 @@ Measuring needs nothing heavy — the base install is `httpx` and `pydantic`, an
 | `parquet` | pandas, pyarrow | `to_parquet` / `load_parquet` |
 
 `parquet` is separate because pyarrow is a ~123 MB install, which is a lot to
-impose on someone who only wants a chart. uv works too (`uv add "git+…"`) but
-nothing here requires it.
+impose on someone who only wants a chart.
 
-Installing reaches the network even from a checkout already on disk: the build
-backend (`uv_build`) is fetched into pip's build isolation before any dependency
-is considered, so `--no-index` fails there first. On a machine without an index
-that carries it, install the backend once, then build without isolation:
+### Without uv
+
+Nothing here requires uv — it is a convenience, never a runtime dependency. The
+same installs with pip:
+
+```bash
+pip install "git+https://github.com/propeller-heads/price-of-ethereum"
+pip install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum"
+```
+
+One caveat that only bites pip: installing reaches the network even from a
+checkout already on disk, because the build backend (`uv_build`) is fetched into
+pip's build isolation before any dependency is considered, so `--no-index` fails
+there first. On a machine without an index that carries it, install the backend
+once and then build without isolation:
 
 ```bash
 pip install uv_build                       # once, from your mirror
