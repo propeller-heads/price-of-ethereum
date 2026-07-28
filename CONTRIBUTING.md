@@ -68,6 +68,44 @@ stale, not that this package is broken. Re-vendor the changed document; the
 offline contract tests in the same file say whether anything the SDK actually
 depends on moved.
 
+## The committed example artifacts
+
+`examples/report.html`, `examples/images/*.png`, `examples/data/README.md` and
+the stored outputs inside `examples/quickstart.ipynb` are generated, and one
+command rebuilds all of them from the dataset in `examples/data`:
+
+```bash
+uv sync --group docs
+uv run python examples/build_showcase.py
+```
+
+Only the notebook step needs a running Fynd — it executes every cell, so its
+stored outputs are a live measurement. Everything else reads the committed
+dataset, which is why the report stays reproducible by anyone.
+
+The `docs` group is not part of `--all-extras --dev` and CI never installs it,
+so nothing under `src/` may import from it. It carries `nbconvert` and
+`ipykernel` to execute the notebook and `kaleido` to rasterise figures; kaleido
+from v1 drives a headless Chrome that it does not bundle, using an installed one
+or a private copy fetched by `plotly_get_chrome`. The screenshot step needs that
+same Chrome and is skipped with a message when there is none.
+
+Three things about it are deliberate. Every Plotly output in the notebook gets a
+PNG injected beside it, because GitHub's notebook viewer runs no JavaScript and
+would otherwise show a blank gap. The notebook must be executed against a real
+Fynd, since with none listening it silently falls back to
+`examples/simulated_fynd.py` and would commit fabricated numbers under a header
+promising measured ones. And nothing else may collect into `examples/data`:
+`poe collect` appends, so a second run would splice a different pair or sweep
+width into one history. `tests/test_examples.py` fails on all three.
+
+Recollecting is `poe collect --blocks 12 --out examples/data` into an emptied
+directory. The dataset is ~2.0 MB, the one place `.gitignore` lets a measured
+dataset be committed, and it exists so the report can be rebuilt without a
+server. Rebuilding `report.html` itself costs ~1.7 MB of git history each time,
+since Plotly's bundle is inlined in it — do that when the report changes, not to
+refresh the sample.
+
 ## Commit messages
 
 This repo follows [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
