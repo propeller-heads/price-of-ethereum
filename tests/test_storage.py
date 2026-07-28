@@ -136,6 +136,9 @@ def test_load_latest_block_rows_on_empty_file(tmp_path: Path) -> None:
 
 
 def test_parquet_round_trip(tmp_path: Path) -> None:
+    # Parquet lives behind its own extra, so an install without it skips rather
+    # than failing a suite the contributor did not break.
+    pytest.importorskip("pyarrow")
     jsonl_path = tmp_path / "rows.jsonl"
     parquet_path = tmp_path / "rows.parquet"
     append_jsonl(jsonl_path, ROWS)

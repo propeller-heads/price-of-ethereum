@@ -49,16 +49,30 @@ Measuring needs nothing heavy — the base install is `httpx` and `pydantic`, an
 impose on someone who only wants a chart. uv works too (`uv add "git+…"`) but
 nothing here requires it.
 
+Installing reaches the network even from a checkout already on disk: the build
+backend (`uv_build`) is fetched into pip's build isolation before any dependency
+is considered, so `--no-index` fails there first. On a machine without an index
+that carries it, install the backend once, then build without isolation:
+
+```bash
+pip install uv_build                       # once, from your mirror
+source .venv/bin/activate                  # required: the backend is found on PATH
+pip install . --no-build-isolation --no-index --no-deps
+```
+
 ## Setup
 
 The SDK measures against a [Fynd](https://docs.fynd.xyz) server you run
 yourself. Five steps, start to finish.
 
 **1. Get a Tycho API key.** Message the Telegram bot
-[@fynd_portal_bot](https://t.me/fynd_portal_bot). The key is required, not
-optional: Fynd uses it to index the liquidity it quotes against. Both the
-[Fynd quickstart](https://docs.fynd.xyz/get-started/quickstart) and the
-[Tycho docs](https://docs.propellerheads.xyz/tycho) point at the same bot.
+[@fynd_portal_bot](https://t.me/fynd_portal_bot): run `/start` and follow the
+prompts. The key is required, not optional — Fynd uses it to index the liquidity
+it quotes against — and it is free during beta. The
+[Fynd quickstart](https://docs.fynd.xyz/get-started/quickstart), the
+[key instructions](https://docs.fynd.xyz/get-started/hosted-api#get-an-api-key)
+and the [Tycho docs](https://docs.propellerheads.xyz/tycho) all point at that
+same bot.
 
 **2. Install Fynd.**
 
@@ -150,6 +164,13 @@ poe collect --blocks 50 --out data # record 50 blocks into JSONL
 poe report --out data --output report.html   # self-contained HTML report
 ```
 
+A snapshot is roughly 220 quotes against your Fynd: 100 sizes per side, plus the
+anchored levels and a handful of probes. That has to fit inside one block, which
+is what the bundled worker-pool config is tuned for — 2.5-3.0 s per snapshot on
+mainnet. `collect` then waits for the next block, so wall-clock is set by the
+chain rather than by this tool: 50 blocks on Ethereum is about ten minutes and
+some 11,000 quotes, all against a server you are running.
+
 `poe snapshot --help` lists the measurement knobs (`--pair`, `--token`,
 `--numeraire`, `--samples-per-side`, `--search-min/max`). `report` reads only
 what is already on disk — it never contacts Fynd or Tycho. Fynd's HTTP surface,
@@ -201,6 +222,50 @@ Quotes are encoded for `--sender`, which defaults to a placeholder address that
 holds nothing, so those links open but revert on the transfer and are recorded
 as `tenderly_status="placeholder_sender"`. Pass an address that actually holds
 the sell token and has approved the router to get `ready` links that simulate.
+
+## What lands on disk
+
+`poe collect --out data` writes three JSONL files per pair and chain, named from
+the pair label and chain id — `ETH/USDC` on chain 1 becomes:
+
+```
+data/eth-usdc_1.rows.jsonl      one line per measured trade size
+data/eth-usdc_1.blocks.jsonl    one line per block
+data/eth-usdc_1.anchors.jsonl   one line per anchored level
+```
+
+Rows and anchors are written before the block summary, so a block present in
+`blocks.jsonl` has all of its rows on disk — join the others against it and a
+run killed mid-block costs you that block, not the file.
+
+**`rows.jsonl`** — `kind` is `curve` for a swept rung and `anchor` for a headline
+level:
+
+| | |
+| --- | --- |
+| identity | `kind`, `chain_id`, `block_number`, `block_hash`, `block_timestamp`, `pair`, `side`, `mixed_block` |
+| the trade | `size_numeraire`, `amount_in`, `amount_out`, `amount_out_net_gas` |
+| the result | `execution_price`, `impact_pct`, `price_impact_bps`, `price_impact_bps_raw` |
+| gas | `gas_estimate`, `gas_price`, `gas_cost_token_out` |
+| route | `route_hash`, `n_pools`, `protocols`, `solve_time_ms` |
+| token | `token_quality`, `token_tax` |
+
+`kind="anchor"` rows carry four more: `target_impact_pct`, `bound`,
+`target_reached` and `derived_from` — the last says whether the level came from
+a dedicated bisection or was read off the sweep.
+
+**`blocks.jsonl`** — `pair`, `chain_id`, `token_symbol`, `numeraire_symbol`,
+`block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
+`robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
+`search_max`, `samples_per_side`, `duration_ms`.
+
+**`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
+`transaction_value`, `transaction_data`, `router_fee`, `client_fee`,
+`max_slippage`, `min_amount_received`, `tenderly_url`, `tenderly_status`, keyed
+by the same block identity plus `side`, `target_impact_pct` and `size_numeraire`.
+
+Sizes are in whole numeraire units; amounts are base-unit strings as the chain
+reports them; `price_impact_bps` is basis points and `impact_pct` is percent.
 
 ## Report
 
@@ -255,9 +320,19 @@ requirements:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[data,viz]" --group dev   # pip >= 25.1; or: pip install -e . pytest
+pip install -e ".[data,viz,parquet]" --group dev   # pip >= 25.1; or: pip install -e . pytest
 pytest
 ```
+
+All three extras, because the suite covers parquet conversion too; omitting
+`parquet` leaves one test failing on a clean checkout. Activate the virtualenv
+rather than calling `.venv/bin/…` directly — `ty` resolves imports from the
+active environment and otherwise reports every third-party import as missing.
+
+`uv.lock` pins the exact tool versions CI uses, and pip installs the floors from
+`[dependency-groups]` instead. Those are pinned to the same versions for that
+reason: a newer `ruff` can reformat files this one leaves alone, which shows up
+as `ruff format --check` failing on a file you never touched.
 
 ## License
 

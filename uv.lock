@@ -396,8 +396,8 @@ provides-extras = ["data", "parquet", "viz"]
 [package.metadata.requires-dev]
 dev = [
     { name = "pytest", specifier = ">=9.1.1" },
-    { name = "ruff", specifier = ">=0.15.22" },
-    { name = "ty", specifier = ">=0.0.61" },
+    { name = "ruff", specifier = "==0.15.22" },
+    { name = "ty", specifier = "==0.0.61" },
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ from types import TracebackType
 from typing import Self
 
 import httpx
+from pydantic import ValidationError
 
 from price_of_ethereum.fynd.models import (
     EncodingOptions,
@@ -95,7 +96,19 @@ class FyndClient:
             response = self._http.get("/v1/health", timeout=timeout)
         if response.status_code not in (200, 503):
             response.raise_for_status()
-        return HealthStatus.model_validate_json(response.content)
+        try:
+            return HealthStatus.model_validate_json(response.content)
+        except ValidationError as error:
+            # Something answered but it is not Fynd, or not a Fynd this SDK
+            # knows: a proxy, a captive portal, another service on the port. A
+            # validation traceback reads as "the SDK crashed" rather than "that
+            # is not the server you think it is".
+            raise FyndError(
+                response.status_code,
+                None,
+                f"{self.base_url}/v1/health did not answer like Fynd: {error.error_count()} "
+                f"unexpected or missing field(s). Check that Fynd is what is listening there.",
+            ) from error
 
     def info(self) -> InstanceInfo:
         response = self._http.get("/v1/info")

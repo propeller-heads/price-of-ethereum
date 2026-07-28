@@ -292,3 +292,17 @@ def test_wait_until_ready_retries_after_transport_error() -> None:
     status = client.wait_until_ready(timeout_s=1.0, poll_interval_s=0.01, poll_timeout_s=0.5)
     assert status.healthy
     assert calls["n"] == 2
+
+
+def test_health_on_a_non_fynd_server_is_named_not_a_traceback() -> None:
+    # A proxy, a captive portal or another service on port 3000 all answer with
+    # JSON that is not a HealthStatus. A validation traceback reads as an SDK
+    # crash; the caller needs to know it reached the wrong server.
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "ok", "ready": True})
+
+    with (
+        FyndClient(transport=httpx.MockTransport(handler)) as fynd,
+        pytest.raises(FyndError, match="did not answer like Fynd"),
+    ):
+        fynd.health()
