@@ -190,6 +190,9 @@ def test_to_block_row_carries_every_summary_field() -> None:
         "search_min": 50.0,
         "search_max": 50_000_000.0,
         "samples_per_side": 8,
+        # The anchors' calldata is only meaningful against the bound it was
+        # encoded for, so the summary records it.
+        "slippage": "0.001",
         "duration_ms": snapshot.duration_ms,
     }
 

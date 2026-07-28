@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 from urllib.parse import urlencode
 
-from price_of_ethereum.fynd.client import DUMMY_SENDER, FyndClient
+from price_of_ethereum.fynd.client import DEFAULT_SLIPPAGE, DUMMY_SENDER, FyndClient
 from price_of_ethereum.fynd.models import OrderQuote, Transaction
 from price_of_ethereum.pricing import (
     ROBUST_MID_MIN_DEPTH,
@@ -84,6 +84,10 @@ class SnapshotConfig:
     anchor_bisect_tolerance: float = 0.02
     anchor_accept_tolerance: float = 0.05
     probe_notional: float = 1000.0
+    # Encoding slippage as a decimal string, Fynd's wire type. Only anchored
+    # levels encode, and the default is tight enough that Fynd's price guard
+    # refuses the largest sizes — loosen it to get calldata for those.
+    slippage: str = DEFAULT_SLIPPAGE
 
     def __post_init__(self) -> None:
         # An anchor target absent from impact_levels would still run its full
@@ -166,6 +170,7 @@ class Snapshot:
     search_min: float
     search_max: float
     samples_per_side: int
+    slippage: str
     duration_ms: int
 
     def _matches_block(self, quote: OrderQuote) -> bool:
@@ -248,6 +253,7 @@ class Snapshot:
             "search_min": self.search_min,
             "search_max": self.search_max,
             "samples_per_side": self.samples_per_side,
+            "slippage": self.slippage,
             "duration_ms": self.duration_ms,
         }
 
@@ -469,6 +475,7 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                 timeout_ms=config.timeout_ms,
                 max_iters=config.anchor_max_iters,
                 tolerance=config.anchor_bisect_tolerance,
+                slippage=config.slippage,
             )
             for target in config.anchor_targets
             for side, sweep in sides
@@ -574,5 +581,6 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
         search_min=config.search_min,
         search_max=config.search_max,
         samples_per_side=config.samples_per_side,
+        slippage=config.slippage,
         duration_ms=int((time.monotonic() - started) * 1000),
     )

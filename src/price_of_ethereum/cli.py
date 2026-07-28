@@ -32,7 +32,12 @@ from price_of_ethereum.collect import (
     output_paths,
     paths_for,
 )
-from price_of_ethereum.fynd.client import DUMMY_SENDER, FyndClient, FyndError
+from price_of_ethereum.fynd.client import (
+    DEFAULT_SLIPPAGE,
+    DUMMY_SENDER,
+    FyndClient,
+    FyndError,
+)
 from price_of_ethereum.sizing import SpotProbeError
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
 from price_of_ethereum.storage import append_jsonl, load_jsonl, load_latest_block_rows
@@ -162,6 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
             default=300.0,
             help="How long to wait for Fynd to finish cold-start hydration.",
         )
+        sub.add_argument(
+            "--slippage",
+            default=DEFAULT_SLIPPAGE,
+            help=(
+                "Slippage bound the anchored levels' calldata is encoded for, as a decimal "
+                "fraction. The default is tight enough that Fynd declines to encode the "
+                "largest sizes; those levels are still measured, but without a transaction."
+            ),
+        )
         sub.add_argument("--out", default="data", help="Output directory for JSONL files.")
 
     snapshot_parser = subparsers.choices["snapshot"]
@@ -207,6 +221,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validated_slippage(value: str) -> str:
+    """Fynd wants a decimal string; reject anything outside (0, 1) up front.
+
+    A bad bound would otherwise surface as an encoding failure per anchor,
+    minutes into a run, looking like thin liquidity rather than a typo.
+    """
+    try:
+        fraction = float(value)
+    except ValueError:
+        raise SystemExit(f"--slippage must be a decimal fraction, got {value!r}.") from None
+    if not 0 < fraction < 1:
+        raise SystemExit(f"--slippage must be between 0 and 1 exclusive, got {value!r}.")
+    return value
+
+
 def _token_override(args: argparse.Namespace, prefix: str) -> TokenMeta | None:
     """Build a `TokenMeta` from `--{prefix}-decimals`/`--{prefix}-symbol`, or
     `None` if neither was given.
@@ -241,6 +270,9 @@ def _tycho_required(args: argparse.Namespace) -> bool:
 def build_config(
     args: argparse.Namespace, chain_id: int, tycho: TychoClient | None
 ) -> SnapshotConfig:
+    # Argument-only checks first: they cost nothing and a run that is going to
+    # fail should fail before it waits on Fynd or reaches for Tycho.
+    slippage = _validated_slippage(args.slippage)
     token_meta = _token_override(args, "token")
     numeraire_meta = _token_override(args, "numeraire")
     unresolved = [
@@ -271,6 +303,7 @@ def build_config(
         search_min=args.search_min,
         search_max=args.search_max,
         samples_per_side=args.samples_per_side,
+        slippage=slippage,
         max_workers=args.max_workers,
     )
 

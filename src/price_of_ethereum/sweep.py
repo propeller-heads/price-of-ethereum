@@ -24,7 +24,7 @@ from typing import Literal
 import httpx
 from pydantic import ValidationError
 
-from price_of_ethereum.fynd.client import FyndClient, FyndError
+from price_of_ethereum.fynd.client import DEFAULT_SLIPPAGE, FyndClient, FyndError
 from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS, OrderQuote
 from price_of_ethereum.pricing import Side, execution_price, impact_pct, is_finite_number
 from price_of_ethereum.sizing import SizedRung, sized_amount
@@ -91,6 +91,7 @@ def quote_at_notional(
     min_responses: int,
     timeout_ms: int,
     encoding: bool,
+    slippage: str = DEFAULT_SLIPPAGE,
 ) -> tuple[OrderQuote, float, int] | None:
     """Quote `amount` base units in `side` direction; (quote, execution_price,
     solve_time_ms). `notional` is the numeraire size `amount` was sized from and
@@ -106,7 +107,11 @@ def quote_at_notional(
     order = fynd.build_order(token_in, token_out, amount)
     try:
         result = fynd.quote(
-            order, min_responses=min_responses, timeout_ms=timeout_ms, encoding=encoding
+            order,
+            min_responses=min_responses,
+            timeout_ms=timeout_ms,
+            encoding=encoding,
+            slippage=slippage,
         )
     except (FyndError, httpx.HTTPError, ValidationError) as error:
         logger.debug("quote failed (%s %s notional): %s", side, notional, error)
@@ -193,6 +198,7 @@ def anchor_target_from_sweep(
     timeout_ms: int = 8000,
     max_iters: int = 3,
     tolerance: float = 0.02,
+    slippage: str = DEFAULT_SLIPPAGE,
 ) -> AnchorResult | None:
     """Tight bisection seeded by the sweep's bracket around `target_pct`.
 
@@ -247,6 +253,7 @@ def anchor_target_from_sweep(
                 min_responses=0,
                 timeout_ms=timeout_ms,
                 encoding=wants_encoding,
+                slippage=slippage,
             )
             if measured is not None:
                 break
