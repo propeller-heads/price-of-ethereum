@@ -24,6 +24,7 @@ import os
 import sys
 from dataclasses import fields as dataclass_fields
 from pathlib import Path
+from typing import Any
 
 from price_of_ethereum import __version__
 from price_of_ethereum.collect import (
@@ -38,7 +39,8 @@ from price_of_ethereum.fynd.client import (
     FyndClient,
     FyndError,
 )
-from price_of_ethereum.sizing import SpotProbeError
+from price_of_ethereum.pricing import ROBUST_MID_MAX_DEPTH, ROBUST_MID_MIN_DEPTH
+from price_of_ethereum.sizing import SpotProbeError, spot_price
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
 from price_of_ethereum.storage import append_jsonl, load_jsonl, load_latest_block_rows
 from price_of_ethereum.tokens import TokenMeta, resolve_tokens
@@ -62,8 +64,29 @@ CHAIN_TYCHO_HOSTS: dict[int, tuple[Chain, str]] = {
     42161: ("arbitrum", "https://tycho-arbitrum-beta.propellerheads.xyz"),
 }
 
+# A dollar-denominated reference per chain, used to express the dollar-shaped
+# defaults (the robust-mid band, the spot probe, the grid bounds) in whatever
+# numeraire a run actually uses. Native Circle USDC where it exists; BNB Smart
+# Chain has none, so the deepest bridged dollar stands in. Decimals are NOT
+# recorded here on purpose — BSC-USD carries 18 where USDC carries 6, and a
+# wrong constant would misprice the band silently. They come from Tycho.
+USD_REFERENCE: dict[int, str] = {
+    1: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC
+    56: "0x55d398326f99059fF775485246999027B3197955",  # BSC-USD (Binance-Peg)
+    130: "0x078D782b760474a361dDA0AF3839290b0EF57AD6",  # USDC
+    137: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359",  # USDC
+    8453: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # USDC
+    42161: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  # USDC
+}
+
+# Probe size for pricing the numeraire against that reference, in dollars. Small
+# enough to read as a marginal rate rather than a trade with its own impact.
+USD_REFERENCE_PROBE = 1_000.0
+
 # The sweep parameters have one source of truth: SnapshotConfig's defaults.
-SNAPSHOT_DEFAULTS = {field.name: field.default for field in dataclass_fields(SnapshotConfig)}
+SNAPSHOT_DEFAULTS: dict[str, Any] = {
+    field.name: field.default for field in dataclass_fields(SnapshotConfig)
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -146,13 +169,13 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument(
             "--search-min",
             type=float,
-            default=SNAPSHOT_DEFAULTS["search_min"],
+            default=None,
             help="Smallest trade size to quote, in whole numeraire units (USDC by default).",
         )
         sub.add_argument(
             "--search-max",
             type=float,
-            default=SNAPSHOT_DEFAULTS["search_max"],
+            default=None,
             help="Largest trade size to quote, in whole numeraire units (USDC by default).",
         )
         sub.add_argument(
@@ -166,6 +189,21 @@ def build_parser() -> argparse.ArgumentParser:
             type=float,
             default=300.0,
             help="How long to wait for Fynd to finish cold-start hydration.",
+        )
+        sub.add_argument(
+            "--usd-reference",
+            default=None,
+            help=(
+                "Token standing in for a dollar, used to size the defaults in this pair's "
+                "numeraire. Defaults to the chain's stablecoin; pass 'none' to keep every "
+                "size in raw numeraire units."
+            ),
+        )
+        sub.add_argument(
+            "--usd-reference-decimals",
+            type=int,
+            default=None,
+            help="Decimals for --usd-reference, so the rate needs no Tycho lookup.",
         )
         sub.add_argument(
             "--slippage",
@@ -267,12 +305,72 @@ def _tycho_required(args: argparse.Namespace) -> bool:
     return _token_override(args, "token") is None or _token_override(args, "numeraire") is None
 
 
+def _numeraire_price_in_usd(
+    args: argparse.Namespace,
+    chain_id: int,
+    numeraire: TokenMeta,
+    fynd: FyndClient | None,
+    tycho: TychoClient | None,
+) -> float | None:
+    """What one numeraire unit is worth in dollars, measured through Fynd.
+
+    None means sizes stay in raw numeraire units: either there is no Fynd to ask,
+    no reference for this chain, the caller opted out, or the quote failed. The
+    caller records which, because a band of 2,500 means something very different
+    in USDC than in BNB.
+    """
+    choice = args.usd_reference
+    if choice is not None and choice.lower() == "none":
+        return None
+    reference = choice or USD_REFERENCE.get(chain_id)
+    if reference is None or fynd is None:
+        return None
+    if reference.lower() == numeraire.address.lower():
+        return 1.0  # the numeraire already is the dollar
+    decimals = args.usd_reference_decimals
+    if decimals is None:
+        if tycho is None:
+            raise SystemExit(
+                f"--usd-reference {reference} needs its decimals: pass "
+                "--usd-reference-decimals, or allow Tycho to resolve them."
+            )
+        decimals = resolve_tokens(tycho, [reference])[reference.lower()].decimals
+    try:
+        return spot_price(
+            fynd,
+            token=numeraire.address,
+            token_decimals=numeraire.decimals,
+            numeraire=reference,
+            numeraire_decimals=decimals,
+            probe_notional=USD_REFERENCE_PROBE,
+        )
+    except SpotProbeError as error:
+        logging.getLogger(__name__).warning(
+            "no %s/%s route to price the numeraire (%s); sizes stay in numeraire units",
+            numeraire.symbol,
+            reference,
+            error,
+        )
+        return None
+
+
 def build_config(
-    args: argparse.Namespace, chain_id: int, tycho: TychoClient | None
+    args: argparse.Namespace,
+    chain_id: int,
+    tycho: TychoClient | None,
+    fynd: FyndClient | None = None,
 ) -> SnapshotConfig:
     # Argument-only checks first: they cost nothing and a run that is going to
     # fail should fail before it waits on Fynd or reaches for Tycho.
     slippage = _validated_slippage(args.slippage)
+    # WETH and USDC default to their Ethereum addresses. On another chain those
+    # are somebody else's contracts, or nobody's, and quoting them measures
+    # something other than the pair the user thinks they asked for.
+    if chain_id != 1 and (args.token == WETH_MAINNET or args.numeraire == USDC_MAINNET):
+        raise SystemExit(
+            f"--token/--numeraire still hold their Ethereum defaults, but Fynd reports "
+            f"chain {chain_id}. Pass the addresses for that chain."
+        )
     token_meta = _token_override(args, "token")
     numeraire_meta = _token_override(args, "numeraire")
     unresolved = [
@@ -295,14 +393,29 @@ def build_config(
             numeraire_meta = resolved[args.numeraire.lower()]
     if token_meta is None or numeraire_meta is None:
         raise SystemExit("could not determine token metadata for the pair.")
+
+    # Every default below reads as dollars. Divide by the numeraire's dollar
+    # price to say the same thing in numeraire units; a rate of None leaves them
+    # as raw numeraire units, which is right only for a dollar numeraire.
+    numeraire_usd = _numeraire_price_in_usd(args, chain_id, numeraire_meta, fynd, tycho)
+    scale = 1.0 if numeraire_usd is None else 1.0 / numeraire_usd
+    defaults = SNAPSHOT_DEFAULTS
     return SnapshotConfig(
         token=token_meta,
         numeraire=numeraire_meta,
         pair=args.pair,
         chain_id=chain_id,
-        search_min=args.search_min,
-        search_max=args.search_max,
+        search_min=args.search_min
+        if args.search_min is not None
+        else defaults["search_min"] * scale,
+        search_max=args.search_max
+        if args.search_max is not None
+        else defaults["search_max"] * scale,
         samples_per_side=args.samples_per_side,
+        probe_notional=defaults["probe_notional"] * scale,
+        mid_band_min=ROBUST_MID_MIN_DEPTH * scale,
+        mid_band_max=ROBUST_MID_MAX_DEPTH * scale,
+        numeraire_usd=numeraire_usd,
         slippage=slippage,
         max_workers=args.max_workers,
     )
@@ -330,7 +443,7 @@ def make_tycho(args: argparse.Namespace, chain_id: int) -> TychoClient:
 def run_snapshot(
     args: argparse.Namespace, fynd: FyndClient, tycho: TychoClient | None, chain_id: int
 ) -> int:
-    config = build_config(args, chain_id, tycho)
+    config = build_config(args, chain_id, tycho, fynd)
     snapshot = collect_snapshot(fynd, config)
     print(json.dumps(snapshot.to_block_row(), indent=2))
     if args.write:
@@ -345,7 +458,7 @@ def run_snapshot(
 def run_collect(
     args: argparse.Namespace, fynd: FyndClient, tycho: TychoClient | None, chain_id: int
 ) -> int:
-    config = build_config(args, chain_id, tycho)
+    config = build_config(args, chain_id, tycho, fynd)
     result = collect_blocks(fynd, config, out_dir=args.out, blocks=args.blocks)
     print(
         f"recorded {result.blocks_recorded} blocks "

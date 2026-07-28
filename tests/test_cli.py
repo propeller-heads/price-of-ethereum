@@ -67,8 +67,10 @@ def test_parser_defaults() -> None:
     args = build_parser().parse_args(["collect"])
     assert args.fynd_url == "http://127.0.0.1:3000"
     assert args.samples_per_side == 100
-    assert args.search_min == 50.0
-    assert args.search_max == 50_000_000.0
+    # None, not the number: build_config needs to tell "unset" from "set to the
+    # default" so it knows whether it may scale them into numeraire units.
+    assert args.search_min is None
+    assert args.search_max is None
     assert args.blocks is None
     assert args.out == "data"
 
@@ -324,3 +326,43 @@ def test_slippage_reaches_the_snapshot_config() -> None:
     )
     config = build_config(args, chain_id=1, tycho=None)
     assert config.slippage == "0.02"
+
+
+def test_mainnet_defaults_are_refused_on_another_chain() -> None:
+    # Ethereum's WETH and USDC addresses are somebody else's contracts on BSC,
+    # so quoting them there measures a pair nobody asked for.
+    args = build_parser().parse_args(["snapshot"])
+    with pytest.raises(SystemExit, match="Ethereum defaults"):
+        build_config(args, chain_id=56, tycho=None)
+
+
+def test_sizes_stay_in_numeraire_units_without_a_rate() -> None:
+    # No Fynd to price the numeraire, so the dollar-shaped defaults are used as
+    # numeraire units and the summary says the rate is unknown.
+    args = build_parser().parse_args(
+        [
+            "snapshot",
+            *("--token-decimals", "18", "--token-symbol", "WETH"),
+            *("--numeraire-decimals", "6", "--numeraire-symbol", "USDC"),
+        ]
+    )
+    config = build_config(args, chain_id=1, tycho=None)
+    assert config.numeraire_usd is None
+    assert (config.mid_band_min, config.mid_band_max) == (2_500.0, 10_000.0)
+    assert config.search_min == 50.0
+    assert config.probe_notional == 1000.0
+
+
+def test_opting_out_of_the_usd_reference_keeps_numeraire_units() -> None:
+    args = build_parser().parse_args(
+        [
+            "snapshot",
+            *("--usd-reference", "none"),
+            *("--token", "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"),
+            *("--numeraire", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"),
+            *("--token-decimals", "18", "--token-symbol", "BTCB"),
+            *("--numeraire-decimals", "18", "--numeraire-symbol", "WBNB"),
+        ]
+    )
+    config = build_config(args, chain_id=56, tycho=None, fynd=None)
+    assert config.numeraire_usd is None

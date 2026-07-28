@@ -30,6 +30,11 @@ def make_config(**overrides: Any) -> SnapshotConfig:
         "pair": "ETH/USDC",
         "chain_id": 1,
         "samples_per_side": 8,
+        # The band is in numeraire units and only means dollars when the
+        # numeraire is one, so both it and the rate that scaled it are recorded.
+        "mid_band_min": 2_500.0,
+        "mid_band_max": 10_000.0,
+        "numeraire_usd": None,
         "impact_levels": (1.0,),
         "anchor_targets": (),
         "max_workers": 2,
@@ -190,6 +195,11 @@ def test_to_block_row_carries_every_summary_field() -> None:
         "search_min": 50.0,
         "search_max": 50_000_000.0,
         "samples_per_side": 8,
+        # The band is in numeraire units and only reads as dollars when the
+        # numeraire is one, so it travels with the rate that scaled it.
+        "mid_band_min": 2_500.0,
+        "mid_band_max": 10_000.0,
+        "numeraire_usd": None,
         # The anchors' calldata is only meaningful against the bound it was
         # encoded for, so the summary records it.
         "slippage": "0.001",

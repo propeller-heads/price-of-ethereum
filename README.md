@@ -233,6 +233,22 @@ Block identity comes from the quotes themselves — the majority block labels th
 snapshot and `mixed_block` flags a straddle. There is no RPC client and no
 database anywhere in this package.
 
+Those dollar figures are the point of `--usd-reference`. The band, the spot
+probe and the grid bounds are all denominated in the numeraire, and only read as
+dollars when the numeraire is a dollar. Measuring ETH in USDC they are the same
+thing; measuring BTC in BNB, a "2,500" band would mean 2,500 BNB — millions of
+dollars, far outside any sweep — and `robust_mid` would fall back every block.
+
+So `poe` prices the numeraire against a stablecoin on the chain Fynd reports and
+scales those defaults into numeraire units. The rate lands in each block summary
+as `numeraire_usd`, alongside the `mid_band_min`/`mid_band_max` it produced, so a
+reader can see what the band meant. Pass `--usd-reference <address>` to choose a
+different reference, `--usd-reference-decimals` to skip the Tycho lookup for it,
+or `--usd-reference none` to keep every size in raw numeraire units. When there
+is no route to the reference, `numeraire_usd` is null and sizes stay in numeraire
+units — recorded rather than guessed. Setting `--search-min`/`--search-max`
+yourself always wins over the scaling.
+
 Each anchored level also writes the transaction behind it to `*.anchors.jsonl`:
 the router address, the calldata, the fee breakdown, and a Tenderly simulation
 link — the proof that a measurement corresponds to a trade someone could send.
@@ -283,7 +299,8 @@ a dedicated bisection or was read off the sweep.
 **`blocks.jsonl`** — `pair`, `chain_id`, `token_symbol`, `numeraire_symbol`,
 `block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
 `robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
-`search_max`, `samples_per_side`, `slippage`, `duration_ms`.
+`search_max`, `samples_per_side`, `mid_band_min`, `mid_band_max`,
+`numeraire_usd`, `slippage`, `duration_ms`.
 
 **`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
 `transaction_value`, `transaction_data`, `router_fee`, `client_fee`,

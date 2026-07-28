@@ -18,9 +18,14 @@ from typing import Literal
 
 Side = Literal["buy", "sell"]
 
-# Numeraire depth band whose two-sided midpoints define the robust mid. The mid
-# should represent the current clearing price, not liquidity at six- or
-# seven-figure depth, so it comes from the shallow reliable band.
+# The depth band whose two-sided midpoints define the robust mid. The mid should
+# represent the current clearing price, not liquidity at six- or seven-figure
+# depth, so it comes from the shallow reliable band.
+#
+# These are dollars. They are also the defaults in *numeraire* units, which is
+# only the same thing when the numeraire is a dollar stablecoin. Callers measuring
+# against another numeraire scale them by a measured rate and pass the result in;
+# see `SnapshotConfig.mid_band_min`.
 ROBUST_MID_MIN_DEPTH = 2_500.0
 ROBUST_MID_MAX_DEPTH = 10_000.0
 ROBUST_MID_TARGET_DEPTH = 5_000.0
@@ -81,7 +86,12 @@ def derive_price_impact_bps(effective_price: float | None, mid_price: float | No
     return round((effective_price / mid_price - 1.0) * 10000.0, 1)
 
 
-def choose_robust_mid(depth_mid_pairs: Iterable[tuple[float, float]]) -> tuple[float, float] | None:
+def choose_robust_mid(
+    depth_mid_pairs: Iterable[tuple[float, float]],
+    *,
+    band_min: float = ROBUST_MID_MIN_DEPTH,
+    band_max: float = ROBUST_MID_MAX_DEPTH,
+) -> tuple[float, float] | None:
     """Median two-sided midpoint in the depth band; returns (mid, median_depth).
 
     When fewer than 3 pairs land inside the band, take the ROBUST_MID_SAMPLES
@@ -96,11 +106,12 @@ def choose_robust_mid(depth_mid_pairs: Iterable[tuple[float, float]]) -> tuple[f
     if not clean:
         return None
 
-    band = [pair for pair in clean if ROBUST_MID_MIN_DEPTH <= pair[0] <= ROBUST_MID_MAX_DEPTH]
+    target = math.sqrt(band_min * band_max)
+    band = [pair for pair in clean if band_min <= pair[0] <= band_max]
     if len(band) < 3:
         band = sorted(
             clean,
-            key=lambda pair: abs(math.log(pair[0] / ROBUST_MID_TARGET_DEPTH)),
+            key=lambda pair: abs(math.log(pair[0] / target)),
         )[:ROBUST_MID_SAMPLES]
 
     mids = [mid for _, mid in band]
@@ -112,6 +123,9 @@ def choose_robust_mid(depth_mid_pairs: Iterable[tuple[float, float]]) -> tuple[f
 def robust_mid_from_sides(
     buy_points: Iterable[tuple[float, float]],
     sell_points: Iterable[tuple[float, float]],
+    *,
+    band_min: float = ROBUST_MID_MIN_DEPTH,
+    band_max: float = ROBUST_MID_MAX_DEPTH,
 ) -> tuple[float, float] | None:
     """Robust mid from already-collected sweep rungs, as (notional, price) pairs.
 
@@ -132,18 +146,23 @@ def robust_mid_from_sides(
             continue
         pairs.append((float(depth), (buy_price + float(sell_price)) / 2.0))
 
-    return choose_robust_mid(pairs)
+    return choose_robust_mid(pairs, band_min=band_min, band_max=band_max)
 
 
-def robust_mid_probe_depths(max_depth: float) -> list[float]:
+def robust_mid_probe_depths(
+    max_depth: float,
+    *,
+    band_min: float = ROBUST_MID_MIN_DEPTH,
+    band_max: float = ROBUST_MID_MAX_DEPTH,
+) -> list[float]:
     """Log-spaced dedicated-probe depths across the band, capped at `max_depth`."""
-    capped = max(ROBUST_MID_MIN_DEPTH, min(max_depth, ROBUST_MID_MAX_DEPTH))
-    if capped <= ROBUST_MID_MIN_DEPTH:
-        return [ROBUST_MID_MIN_DEPTH]
+    capped = max(band_min, min(max_depth, band_max))
+    if capped <= band_min:
+        return [band_min]
     return [
         math.exp(
-            math.log(ROBUST_MID_MIN_DEPTH)
-            + i * (math.log(capped) - math.log(ROBUST_MID_MIN_DEPTH)) / (ROBUST_MID_SAMPLES - 1)
+            math.log(band_min)
+            + i * (math.log(capped) - math.log(band_min)) / (ROBUST_MID_SAMPLES - 1)
         )
         for i in range(ROBUST_MID_SAMPLES)
     ]
