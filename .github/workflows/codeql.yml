@@ -19,6 +19,13 @@ concurrency:
 
 jobs:
   analyze:
+    # Code scanning needs Code Security, which a private repository only has
+    # under Advanced Security. Without it the analysis runs to completion and
+    # then fails uploading its results, which is a red check nobody can act on.
+    # Skipping while private starts this automatically once the repository is
+    # public, where code scanning is free. A missing field means an event that
+    # carries no repository payload, and running is the safe reading of that.
+    if: github.event.repository.private != true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
