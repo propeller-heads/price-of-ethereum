@@ -83,6 +83,43 @@ USD_REFERENCE: dict[int, str] = {
 # enough to read as a marginal rate rather than a trade with its own impact.
 USD_REFERENCE_PROBE = 1_000.0
 
+# How often to ask Fynd whether the block has moved, per chain, in seconds.
+#
+# Two things bound this and they pull in opposite directions. Fynd exposes no
+# block number outside a quote, so each poll is a real route solve: on the
+# chains below a single one costs roughly 13ms (unichain) to 114ms (bsc),
+# measured 2026-07-28 as sweep duration over quote count. Polling faster than
+# that just queues requests. Meanwhile a poll interval near the block time means
+# discovering a block late and losing that much of the window the sweep needs.
+#
+# So each value sits well above its chain's probe cost and well below its block
+# interval, both measured the same day:
+#
+#   chain      block     probe    polls/block   note
+#   ethereum   ~12s      ~75ms    ~48           lag is 2% of the block
+#   base       2s        ~63ms    ~10
+#   polygon    1.571s    ~43ms    ~10           interval alternates 1s/2s
+#   unichain   1s        ~13ms    ~10           cheap probes, thin graph
+#   bsc        0.446s    ~114ms   ~3            solver-bound, not sleep-bound
+#   arbitrum   0.253s    ~100ms   ~2            solver-bound; cannot resolve better
+#
+# On bsc and arbitrum the probe itself is a large fraction of a block, so no
+# value here detects every block — the sweep overruns the block anyway. They are
+# set at the probe floor rather than pretending otherwise.
+#
+# An unlisted chain gets DEFAULT_POLL_INTERVAL_S, deliberately conservative: too
+# slow loses blocks on a fast chain, too fast burns solver time on a slow one,
+# and losing blocks is the more visible failure.
+CHAIN_POLL_INTERVAL_S: dict[int, float] = {
+    1: 0.25,
+    56: 0.15,
+    130: 0.10,
+    137: 0.15,
+    8453: 0.20,
+    42161: 0.10,
+}
+DEFAULT_POLL_INTERVAL_S = 0.25
+
 # The sweep parameters have one source of truth: SnapshotConfig's defaults.
 SNAPSHOT_DEFAULTS: dict[str, Any] = {
     field.name: field.default for field in dataclass_fields(SnapshotConfig)
@@ -189,6 +226,16 @@ def build_parser() -> argparse.ArgumentParser:
             type=float,
             default=300.0,
             help="How long to wait for Fynd to finish cold-start hydration.",
+        )
+        sub.add_argument(
+            "--poll-interval-s",
+            type=float,
+            default=None,
+            help=(
+                "How often to ask Fynd whether the block moved. Defaults to a per-chain "
+                "value; each poll is a route solve, so the useful floor is your pair's "
+                "solve time, which the rows record as solve_time_ms."
+            ),
         )
         sub.add_argument(
             "--usd-reference",
@@ -459,7 +506,16 @@ def run_collect(
     args: argparse.Namespace, fynd: FyndClient, tycho: TychoClient | None, chain_id: int
 ) -> int:
     config = build_config(args, chain_id, tycho, fynd)
-    result = collect_blocks(fynd, config, out_dir=args.out, blocks=args.blocks)
+    poll_interval_s = args.poll_interval_s or CHAIN_POLL_INTERVAL_S.get(
+        chain_id, DEFAULT_POLL_INTERVAL_S
+    )
+    result = collect_blocks(
+        fynd,
+        config,
+        out_dir=args.out,
+        blocks=args.blocks,
+        poll_interval_s=poll_interval_s,
+    )
     print(
         f"recorded {result.blocks_recorded} blocks "
         f"({result.rows_written} rows, {result.anchors_written} anchors) "

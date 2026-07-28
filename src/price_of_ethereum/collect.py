@@ -122,18 +122,24 @@ def collect_blocks(
     *,
     out_dir: Path | str,
     blocks: int | None = None,
-    idle_wait_s: float = 2.0,
+    poll_interval_s: float = 0.25,
     max_consecutive_failures: int = 5,
 ) -> CollectResult:
     """Record `blocks` distinct blocks (None = run until interrupted).
 
     Each cycle first asks Fynd which block it would answer on (`probe_block`,
-    one quote) and waits `idle_wait_s` if that block is already recorded, so an
-    idle cycle costs one quote instead of a whole sweep. A probe that fails
+    one quote) and waits `poll_interval_s` if that block is already recorded, so
+    an idle cycle costs one quote instead of a whole sweep. A probe that fails
     falls through to the full snapshot, which owns the real error handling.
 
+    `poll_interval_s` bounds how late a new block is noticed, and that lateness
+    comes straight out of the window the sweep has to finish in. It is also a
+    floor on cost, because Fynd reports a block number only inside a quote, so
+    every poll solves a route. The CLI picks a per-chain value; see
+    `cli.CHAIN_POLL_INTERVAL_S` for the measurements behind them.
+
     A failed cycle (spot probe down, or a snapshot with no block identity at
-    all) waits `idle_wait_s` and retries; `max_consecutive_failures` failures in
+    all) waits `poll_interval_s` and retries; `max_consecutive_failures` failures in
     a row raise `CollectionAbortedError` so a dead Fynd doesn't spin forever.
     Ctrl-C returns the partial result with `interrupted=True`.
 
@@ -157,7 +163,7 @@ def collect_blocks(
             # Cheap clock: skip the sweep entirely while the block hasn't moved.
             if last_block is not None and probe_block(fynd, config) == last_block:
                 idle_probes += 1
-                time.sleep(idle_wait_s)
+                time.sleep(poll_interval_s)
                 continue
             try:
                 snapshot = collect_snapshot(fynd, config)
@@ -174,7 +180,7 @@ def collect_blocks(
                     raise CollectionAbortedError(
                         f"{consecutive_failures} consecutive failed cycles; last: {error}"
                     ) from error
-                time.sleep(idle_wait_s)
+                time.sleep(poll_interval_s)
                 continue
             if snapshot.block_number is None:
                 # Spot worked but every sweep quote failed: nothing to label a
@@ -190,7 +196,7 @@ def collect_blocks(
                     raise CollectionAbortedError(
                         f"{consecutive_failures} consecutive snapshots without block identity"
                     )
-                time.sleep(idle_wait_s)
+                time.sleep(poll_interval_s)
                 continue
             consecutive_failures = 0
             if snapshot.block_number == last_block:
@@ -198,7 +204,7 @@ def collect_blocks(
                 # still landed on the recorded one; rare, and its quotes are
                 # duplicates of what is already stored.
                 duplicate_snapshots += 1
-                time.sleep(idle_wait_s)
+                time.sleep(poll_interval_s)
                 continue
             rows = snapshot.to_rows()
             rows_written += append_jsonl(rows_path, rows)

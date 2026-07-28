@@ -188,6 +188,17 @@ Straddling is not silent: `mixed_block` goes true, quotes from the minority bloc
 are dropped from the rows, and the majority block labels the snapshot. You get an
 honest measurement of a moving target rather than a clean one of a single state.
 
+There is a second, separate way to lose a block, and it is not about sweep
+length. Between snapshots the collector asks Fynd whether the block has moved,
+and sleeps `--poll-interval-s` between asks. Sleep longer than a block and one
+passes unnoticed — no quote ever touches it. The default is per chain because
+the useful range is bounded at both ends: Fynd reports a block number only
+inside a quote, so every poll is a route solve costing roughly 13ms on a thin
+graph and 114ms on a fat one, while a poll interval near the block time spends
+the window the sweep needs. Chains this SDK knows are set between those bounds;
+anything else gets a conservative default. `--poll-interval-s` overrides it, and
+`solve_time_ms` in the rows tells you what the floor is for your pair.
+
 Whether that matters depends on what you are asking. A cost curve over a second
 of a fast chain is still a real cost curve; it is just not the instantaneous
 snapshot the design promises. If you need `mixed_block` false there, you have to

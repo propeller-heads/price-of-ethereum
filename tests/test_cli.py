@@ -12,6 +12,7 @@ import pytest
 
 import amm_sim
 from price_of_ethereum.cli import (
+    CHAIN_POLL_INTERVAL_S,
     CHAIN_TYCHO_HOSTS,
     build_config,
     build_parser,
@@ -366,3 +367,32 @@ def test_opting_out_of_the_usd_reference_keeps_numeraire_units() -> None:
     )
     config = build_config(args, chain_id=56, tycho=None, fynd=None)
     assert config.numeraire_usd is None
+
+
+def test_every_supported_chain_has_a_poll_interval() -> None:
+    # A chain we ship a Tycho host for is a chain someone will collect on, and
+    # the fallback is tuned for nothing in particular.
+    assert set(CHAIN_POLL_INTERVAL_S) == set(CHAIN_TYCHO_HOSTS)
+
+
+def test_poll_intervals_sit_between_the_probe_cost_and_the_block_time() -> None:
+    # Measured 2026-07-28: block interval and the cost of one probe, which is a
+    # route solve because Fynd reports a block number only inside a quote.
+    measured = {  # chain_id: (block_s, probe_s)
+        1: (12.0, 0.075),
+        56: (0.446, 0.114),
+        130: (1.0, 0.013),
+        137: (1.571, 0.043),
+        8453: (2.0, 0.063),
+        42161: (0.253, 0.100),
+    }
+    for chain_id, (block_s, probe_s) in measured.items():
+        interval = CHAIN_POLL_INTERVAL_S[chain_id]
+        assert interval >= probe_s, f"chain {chain_id} polls faster than one probe returns"
+        assert interval < block_s, f"chain {chain_id} polls slower than its blocks arrive"
+
+
+def test_poll_interval_flag_overrides_the_table() -> None:
+    args = build_parser().parse_args(["collect", "--poll-interval-s", "0.5"])
+    assert args.poll_interval_s == 0.5
+    assert build_parser().parse_args(["collect"]).poll_interval_s is None
