@@ -17,7 +17,7 @@ from price_of_ethereum.fynd.client import DUMMY_SENDER
 from price_of_ethereum.fynd.models import Transaction
 from price_of_ethereum.pricing import ROBUST_MID_MIN_DEPTH, robust_mid_probe_depths
 from price_of_ethereum.sizing import atomic
-from price_of_ethereum.snapshot import FALLBACK_PROBE_MAX_DEPTH, build_tenderly_url
+from price_of_ethereum.snapshot import build_tenderly_url
 
 WETH = TokenMeta(address=amm_sim.WETH_ADDRESS, symbol="WETH", decimals=18, quality=100, tax=0)
 USDC = TokenMeta(address=amm_sim.USDC_ADDRESS, symbol="USDC", decimals=6, quality=100, tax=0)
@@ -135,10 +135,13 @@ def test_null_block_rungs_are_kept() -> None:
 
 
 def test_probe_fallback_mid_when_sweep_fails() -> None:
+    config = make_config(samples_per_side=4)
     spot_amount = atomic(1000.0, USDC.decimals)
     probe_quote = amm_sim.order_quote(amm_sim.USDC_ADDRESS, str(spot_amount))
     spot = 1000.0 / (int(probe_quote["amount_out"]) / 10**18)
-    depths = robust_mid_probe_depths(FALLBACK_PROBE_MAX_DEPTH)
+    depths = robust_mid_probe_depths(
+        config.mid_band_max, band_min=config.mid_band_min, band_max=config.mid_band_max
+    )
     allowed_buy = {spot_amount} | {atomic(depth, USDC.decimals) for depth in depths}
     allowed_sell = {atomic(depth / spot, WETH.decimals) for depth in depths}
 
@@ -149,7 +152,7 @@ def test_probe_fallback_mid_when_sweep_fails() -> None:
             body["orders"][0]["status"] = "no_route_found"
 
     with client_with(mutate) as fynd:
-        snapshot = collect_snapshot(fynd, make_config(samples_per_side=4))
+        snapshot = collect_snapshot(fynd, config)
 
     assert snapshot.mid_source == "probe_fallback"
     assert snapshot.curve_buy == [] and snapshot.curve_sell == []

@@ -20,6 +20,7 @@ import contextlib
 import importlib.resources
 import json
 import logging
+import math
 import os
 import sys
 from dataclasses import fields as dataclass_fields
@@ -83,6 +84,9 @@ USD_REFERENCE: dict[int, str] = {
 # enough to read as a marginal rate rather than a trade with its own impact.
 USD_REFERENCE_PROBE = 1_000.0
 
+# ERC-20 reports decimals as a uint8, so anything above this is a typo.
+MAX_TOKEN_DECIMALS = 255
+
 # How often to ask Fynd whether the block has moved, per chain, in seconds.
 #
 # Two things bound this and they pull in opposite directions. Fynd exposes no
@@ -93,19 +97,22 @@ USD_REFERENCE_PROBE = 1_000.0
 # discovering a block late and losing that much of the window the sweep needs.
 #
 # So each value sits well above its chain's probe cost and well below its block
-# interval, both measured the same day:
+# interval, both measured the same day. A cycle is one probe plus one sleep, not
+# the sleep alone, so the probe cost is what decides how much a shorter interval
+# can still buy:
 #
-#   chain      block     probe    polls/block   note
-#   ethereum   ~12s      ~75ms    ~48           lag is 2% of the block
-#   base       2s        ~63ms    ~10
-#   polygon    1.571s    ~43ms    ~10           interval alternates 1s/2s
-#   unichain   1s        ~13ms    ~10           cheap probes, thin graph
-#   bsc        0.446s    ~114ms   ~3            solver-bound, not sleep-bound
-#   arbitrum   0.253s    ~100ms   ~2            solver-bound; cannot resolve better
+#   chain      block     probe    interval   cycle    polls/block   note
+#   ethereum   ~12s      ~75ms    0.25s      0.325s   ~37           lag is 3% of a block
+#   base       2s        ~63ms    0.20s      0.263s   ~7.6
+#   polygon    1.571s    ~43ms    0.15s      0.193s   ~8.1          block alternates 1s/2s
+#   unichain   1s        ~13ms    0.10s      0.113s   ~8.8          cheap probes, thin graph
+#   bsc        0.446s    ~114ms   0.15s      0.264s   ~1.7          solver-bound, not sleep-bound
+#   arbitrum   0.253s    ~100ms   0.10s      0.200s   ~1.3          solver-bound, at the floor
 #
 # On bsc and arbitrum the probe itself is a large fraction of a block, so no
-# value here detects every block — the sweep overruns the block anyway. They are
-# set at the probe floor rather than pretending otherwise.
+# value here detects every block — a cycle costs most of one, and the sweep
+# overruns the block anyway. They are set at the probe floor rather than
+# pretending otherwise.
 #
 # An unlisted chain gets DEFAULT_POLL_INTERVAL_S, deliberately conservative: too
 # slow loses blocks on a fast chain, too fast burns solver time on a slow one,
@@ -229,7 +236,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         sub.add_argument(
             "--poll-interval-s",
-            type=float,
+            type=_validated_poll_interval,
             default=None,
             help=(
                 "How often to ask Fynd whether the block moved. Defaults to a per-chain "
@@ -248,7 +255,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
         sub.add_argument(
             "--usd-reference-decimals",
-            type=int,
+            type=_validated_decimals,
             default=None,
             help="Decimals for --usd-reference, so the rate needs no Tycho lookup.",
         )
@@ -319,6 +326,34 @@ def _validated_slippage(value: str) -> str:
     if not 0 < fraction < 1:
         raise SystemExit(f"--slippage must be between 0 and 1 exclusive, got {value!r}.")
     return value
+
+
+def _validated_poll_interval(value: str) -> float:
+    """A poll interval reaches `time.sleep`, which rejects negatives and NaN with
+    a traceback minutes into a run. Reject them here, before Fynd is contacted.
+    """
+    try:
+        seconds = float(value)
+    except ValueError:
+        raise SystemExit(f"--poll-interval-s must be a number of seconds, got {value!r}.") from None
+    if not math.isfinite(seconds) or seconds < 0:
+        raise SystemExit(f"--poll-interval-s must be finite and non-negative, got {value!r}.")
+    return seconds
+
+
+def _validated_decimals(value: str) -> int:
+    """Decimals scale a probe by `10**decimals`, so a negative turns that into a
+    float and a huge one allocates for a long time. Both are typos, not inputs.
+    """
+    try:
+        places = int(value)
+    except ValueError:
+        raise SystemExit(f"--usd-reference-decimals must be an integer, got {value!r}.") from None
+    if not 0 <= places <= MAX_TOKEN_DECIMALS:
+        raise SystemExit(
+            f"--usd-reference-decimals must be between 0 and {MAX_TOKEN_DECIMALS}, got {value!r}."
+        )
+    return places
 
 
 def _token_override(args: argparse.Namespace, prefix: str) -> TokenMeta | None:
@@ -506,8 +541,10 @@ def run_collect(
     args: argparse.Namespace, fynd: FyndClient, tycho: TychoClient | None, chain_id: int
 ) -> int:
     config = build_config(args, chain_id, tycho, fynd)
-    poll_interval_s = args.poll_interval_s or CHAIN_POLL_INTERVAL_S.get(
-        chain_id, DEFAULT_POLL_INTERVAL_S
+    poll_interval_s = (
+        args.poll_interval_s
+        if args.poll_interval_s is not None
+        else CHAIN_POLL_INTERVAL_S.get(chain_id, DEFAULT_POLL_INTERVAL_S)
     )
     result = collect_blocks(
         fynd,

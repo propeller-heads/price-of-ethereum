@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.resources
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -14,6 +15,7 @@ import amm_sim
 from price_of_ethereum.cli import (
     CHAIN_POLL_INTERVAL_S,
     CHAIN_TYCHO_HOSTS,
+    USD_REFERENCE,
     build_config,
     build_parser,
     main,
@@ -22,6 +24,7 @@ from price_of_ethereum.cli import (
     run_init_worker_pools,
     run_snapshot,
 )
+from price_of_ethereum.collect import CollectionAbortedError
 from price_of_ethereum.fynd import FyndClient
 from price_of_ethereum.storage import load_jsonl
 from price_of_ethereum.tycho import TychoClient
@@ -369,6 +372,51 @@ def test_opting_out_of_the_usd_reference_keeps_numeraire_units() -> None:
     assert config.numeraire_usd is None
 
 
+def test_a_measured_rate_sizes_every_dollar_shaped_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A numeraire worth $2,500 makes a $2,500 band one numeraire unit wide, so
+    # every default has to divide by the rate rather than travel as dollars.
+    monkeypatch.setattr("price_of_ethereum.cli._numeraire_price_in_usd", lambda *_, **__: 2_500.0)
+    args = build_parser().parse_args(
+        [
+            "snapshot",
+            *("--token", "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"),
+            *("--numeraire", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"),
+            *("--token-decimals", "18", "--token-symbol", "BTCB"),
+            *("--numeraire-decimals", "18", "--numeraire-symbol", "WBNB"),
+        ]
+    )
+    config = build_config(args, chain_id=56, tycho=None, fynd=None)
+    assert config.numeraire_usd == 2_500.0
+    assert (config.mid_band_min, config.mid_band_max) == (1.0, 4.0)
+    assert config.search_min == 50.0 / 2_500.0
+    assert config.probe_notional == 1_000.0 / 2_500.0
+
+
+def test_an_explicit_size_is_not_rescaled(monkeypatch: pytest.MonkeyPatch) -> None:
+    # --search-min is already in numeraire units; scaling it would move a size
+    # the caller measured for themselves.
+    monkeypatch.setattr("price_of_ethereum.cli._numeraire_price_in_usd", lambda *_, **__: 2_500.0)
+    args = build_parser().parse_args(
+        [
+            "snapshot",
+            *("--search-min", "7.5"),
+            *("--token", "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"),
+            *("--numeraire", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"),
+            *("--token-decimals", "18", "--token-symbol", "BTCB"),
+            *("--numeraire-decimals", "18", "--numeraire-symbol", "WBNB"),
+        ]
+    )
+    assert build_config(args, chain_id=56, tycho=None, fynd=None).search_min == 7.5
+
+
+def test_every_supported_chain_has_a_usd_reference() -> None:
+    # A chain with no reference sizes its band in raw numeraire units, which on
+    # a WBNB or WETH pair is millions of dollars wide.
+    assert set(USD_REFERENCE) == set(CHAIN_TYCHO_HOSTS)
+
+
 def test_every_supported_chain_has_a_poll_interval() -> None:
     # A chain we ship a Tycho host for is a chain someone will collect on, and
     # the fallback is tuned for nothing in particular.
@@ -389,10 +437,52 @@ def test_poll_intervals_sit_between_the_probe_cost_and_the_block_time() -> None:
     for chain_id, (block_s, probe_s) in measured.items():
         interval = CHAIN_POLL_INTERVAL_S[chain_id]
         assert interval >= probe_s, f"chain {chain_id} polls faster than one probe returns"
-        assert interval < block_s, f"chain {chain_id} polls slower than its blocks arrive"
+        # A cycle is a probe then a sleep, so the probe is what has to fit too.
+        assert interval + probe_s < block_s, f"chain {chain_id} cannot poll twice in a block"
 
 
 def test_poll_interval_flag_overrides_the_table() -> None:
     args = build_parser().parse_args(["collect", "--poll-interval-s", "0.5"])
     assert args.poll_interval_s == 0.5
     assert build_parser().parse_args(["collect"]).poll_interval_s is None
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [(["--poll-interval-s", "0"], 0.0), ([], 0.25)],
+)
+def test_run_collect_honours_an_explicit_zero_poll_interval(
+    monkeypatch: pytest.MonkeyPatch, flag: list[str], expected: float
+) -> None:
+    # 0.0 is falsy but meaningful: poll as fast as Fynd answers.
+    passed: dict[str, float] = {}
+
+    def capture(fynd: object, config: object, **kwargs: Any) -> object:
+        passed["poll_interval_s"] = kwargs["poll_interval_s"]
+        raise CollectionAbortedError("stop after capturing the interval")
+
+    monkeypatch.setattr("price_of_ethereum.cli.collect_blocks", capture)
+    args = build_parser().parse_args(
+        [
+            "collect",
+            *flag,
+            *("--token-decimals", "18", "--token-symbol", "WETH"),
+            *("--numeraire-decimals", "6", "--numeraire-symbol", "USDC"),
+        ]
+    )
+    with pytest.raises(CollectionAbortedError):
+        run_collect(args, cast(FyndClient, None), None, chain_id=1)
+    assert passed["poll_interval_s"] == expected
+
+
+@pytest.mark.parametrize("value", ["-1", "nan", "inf", "fast"])
+def test_unusable_poll_intervals_are_refused_before_fynd(value: str) -> None:
+    # time.sleep raises on these mid-run; argparse should reject them at parse.
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["collect", "--poll-interval-s", value])
+
+
+@pytest.mark.parametrize("value", ["-1", "256", "six"])
+def test_unusable_reference_decimals_are_refused_before_fynd(value: str) -> None:
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["snapshot", "--usd-reference-decimals", value])

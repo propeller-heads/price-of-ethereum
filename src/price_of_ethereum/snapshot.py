@@ -50,10 +50,6 @@ DEFAULT_IMPACT_LEVELS = (
 )  # fmt: skip
 DEFAULT_ANCHOR_TARGETS = (0.5, 1.0, 5.0, 10.0, 25.0, 50.0)
 
-# When the sweep produced no usable buy rung, dedicated mid probes cap at this
-# depth (the band cap in `robust_mid_probe_depths` clamps it further).
-FALLBACK_PROBE_MAX_DEPTH = 500_000.0
-
 MidSource = Literal["sweep_band", "probe_fallback", "spot_degraded"]
 
 TenderlyStatus = Literal["ready", "placeholder_sender", "missing_sender", "no_transaction"]
@@ -558,7 +554,7 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
             len(matching_buy),
             len(matching_sell),
         )
-        max_depth = matching_buy[-1].notional if matching_buy else FALLBACK_PROBE_MAX_DEPTH
+        max_depth = matching_buy[-1].notional if matching_buy else config.mid_band_max
         robust = probe_fallback_mid(fynd, config, spot, max_depth)
         mid_source = "probe_fallback"
     if robust is None:
