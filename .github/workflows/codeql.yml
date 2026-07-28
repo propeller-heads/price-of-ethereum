@@ -23,10 +23,12 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      # Required to upload the SARIF results to the code scanning API. No other
-      # write scope is needed: the repo is public, so CodeQL neither fetches
-      # private query packs (packages: read) nor reads private run metadata
-      # (actions: read).
+      # Reads this run's own metadata through the workflow-runs API, which the
+      # default token cannot see while the repository is private. Harmless once
+      # it is public, where the same call needs no grant.
+      actions: read
+      # Uploads the SARIF results to the code scanning API. The only write
+      # scope in this repository.
       security-events: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

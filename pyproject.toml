@@ -53,6 +53,13 @@ poe = "price_of_ethereum.cli:main"
 requires = ["uv_build>=0.11.21,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv]
+# CI syncs with --locked, which requires the lockfile to match the format the
+# running uv expects, and that format changes between uv releases. Pinning here
+# rather than in the workflow keeps CI and contributors on the one uv that wrote
+# uv.lock; setup-uv reads this field. Bump it and re-lock in the same commit.
+required-version = "==0.11.32"
+
 [tool.uv.build-backend]
 source-include = ["examples/**", "specs/**", "tests/**"]
 
