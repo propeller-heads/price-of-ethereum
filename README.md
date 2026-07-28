@@ -1,4 +1,4 @@
-# Price Of Ethereum SDK
+# Price Of Ethereum
 
 What does it actually cost to trade a token pair onchain, right now, at size?
 This measures it — block by block, from your own [Fynd](https://docs.fynd.xyz)
