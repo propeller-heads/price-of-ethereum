@@ -165,6 +165,43 @@ you never pass it twice. **Only Ethereum mainnet has been verified end to end
 against live liquidity.** The other five are wired up but untested — the host
 answers, and nothing beyond that has been checked.
 
+#### Fast chains break the single-block premise
+
+A snapshot is one measurement of one block: roughly 220 quotes that all have to
+land before the chain moves on, which is what the bundled worker-pool config is
+tuned for. That tuning was measured on Ethereum, where a snapshot takes 2.5–3.0 s
+against a ~12 s block, and the margin is comfortable.
+
+Every other chain Fynd routes on has shorter blocks — published figures run from
+about 2 s on `base` down to roughly 250 ms on `arbitrum` — while snapshot
+duration depends on how much liquidity that chain's graph holds, so it is not
+the same 2.5–3.0 s everywhere. Whether a snapshot fits is therefore an empirical
+question per chain, and this SDK answers it from its own output rather than from
+a table:
+
+- `duration_ms` in each block summary is how long that snapshot took.
+- Consecutive `block_timestamp` values give the chain's real block interval, so
+  you never have to trust a documented figure.
+- `mixed_block` says outright whether the snapshot straddled a boundary.
+
+Straddling is not silent: `mixed_block` goes true, quotes from the minority block
+are dropped from the rows, and the majority block labels the snapshot. You get an
+honest measurement of a moving target rather than a clean one of a single state.
+
+Whether that matters depends on what you are asking. A cost curve over a second
+of a fast chain is still a real cost curve; it is just not the instantaneous
+snapshot the design promises. If you need `mixed_block` false there, you have to
+make the snapshot shorter than a block, which means fewer quotes and a faster
+solve — lower `--samples-per-side`, raise `--max-workers` if your Fynd has the
+cores, and cut the per-pool `timeout_ms` in `worker_pools.toml` (`poe
+init-worker-pools` writes it, and its comments record what each value was
+measured to do). Note that `--samples-per-side` is part of how `robust_mid` is
+defined, not a free resolution knob, so lowering it changes the number you get.
+
+On sub-second chains no tuning closes the gap. Treat `mixed_block` as the honest
+label it is, and read `duration_ms` against your chain's block time to see how
+far off you are.
+
 `--tycho-url` overrides the host for the chain Fynd reports, pointing at a
 self-hosted or otherwise different Tycho. It belongs to the subcommand, not to
 `poe` itself — `poe snapshot --tycho-url …`, not `poe --tycho-url … snapshot`.
