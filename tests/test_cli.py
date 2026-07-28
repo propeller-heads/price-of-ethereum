@@ -295,3 +295,32 @@ def test_partial_override_fails_before_reaching_fynd() -> None:
     # a flag is missing its pair is the behaviour this pins against.
     with pytest.raises(SystemExit, match="--token-decimals and --token-symbol"):
         main(["snapshot", "--fynd-url", "http://127.0.0.1:1", "--token-decimals", "18"])
+
+
+@pytest.mark.parametrize("bad", ["0", "1", "1.5", "-0.01", "loose"])
+def test_slippage_outside_the_open_unit_interval_is_rejected(bad: str) -> None:
+    # A bad bound would otherwise look like thin liquidity: every anchor fails
+    # to encode, minutes into a run, with nothing naming the cause.
+    args = build_parser().parse_args(["snapshot", "--slippage", bad])
+    with pytest.raises(SystemExit, match="--slippage"):
+        build_config(args, chain_id=1, tycho=None)
+
+
+def test_slippage_reaches_the_snapshot_config() -> None:
+    args = build_parser().parse_args(
+        [
+            "snapshot",
+            "--slippage",
+            "0.02",
+            "--token-decimals",
+            "18",
+            "--token-symbol",
+            "WETH",
+            "--numeraire-decimals",
+            "6",
+            "--numeraire-symbol",
+            "USDC",
+        ]
+    )
+    config = build_config(args, chain_id=1, tycho=None)
+    assert config.slippage == "0.02"

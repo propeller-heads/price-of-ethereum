@@ -260,3 +260,43 @@ class TestLevelFromAnchor:
         level = level_from_anchor(self.anchor(6.0), side="buy", target_pct=5.0, tolerance=0.05)
         assert level.bound == "min"
         assert level.target_reached is False
+
+
+def encoding_refusing_client() -> tuple[FyndClient, list[dict]]:
+    """Fynd that prices anything but refuses to encode, as it does at sizes
+    where the default slippage fails its price guard."""
+    request_log: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        request_log.append(payload)
+        order = payload["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        if "encoding_options" in payload["options"]:
+            body["orders"][0]["status"] = "price_check_failed"
+        return httpx.Response(200, json=body)
+
+    return FyndClient(transport=httpx.MockTransport(handler)), request_log
+
+
+def test_anchor_survives_a_size_fynd_will_not_encode() -> None:
+    # Losing the level as well as the calldata would throw away a measurement
+    # Fynd was willing to make, which is the part nobody can reconstruct later.
+    grid = numeraire_grid(50.0, 50_000_000.0, 15)
+    rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
+    fynd, _ = recording_client()
+    sweep = sweep_side(
+        fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+    )
+
+    refusing, request_log = encoding_refusing_client()
+    anchor = anchor_target_from_sweep(
+        refusing, side="buy", target_pct=5.0, sweep=sweep, spot=SPOT, token=WETH, numeraire=USDC
+    )
+
+    assert anchor is not None
+    assert anchor.quote.transaction is None  # recorded as absent, not faked
+    encoded = [p for p in request_log if "encoding_options" in p["options"]]
+    unencoded = [p for p in request_log if "encoding_options" not in p["options"]]
+    assert encoded, "the encoded attempt still comes first"
+    assert unencoded, "and the retry drops encoding rather than the level"

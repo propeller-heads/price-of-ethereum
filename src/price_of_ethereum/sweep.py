@@ -24,7 +24,7 @@ from typing import Literal
 import httpx
 from pydantic import ValidationError
 
-from price_of_ethereum.fynd.client import FyndClient, FyndError
+from price_of_ethereum.fynd.client import DEFAULT_SLIPPAGE, FyndClient, FyndError
 from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS, OrderQuote
 from price_of_ethereum.pricing import Side, execution_price, impact_pct, is_finite_number
 from price_of_ethereum.sizing import SizedRung, sized_amount
@@ -91,6 +91,7 @@ def quote_at_notional(
     min_responses: int,
     timeout_ms: int,
     encoding: bool,
+    slippage: str = DEFAULT_SLIPPAGE,
 ) -> tuple[OrderQuote, float, int] | None:
     """Quote `amount` base units in `side` direction; (quote, execution_price,
     solve_time_ms). `notional` is the numeraire size `amount` was sized from and
@@ -106,7 +107,11 @@ def quote_at_notional(
     order = fynd.build_order(token_in, token_out, amount)
     try:
         result = fynd.quote(
-            order, min_responses=min_responses, timeout_ms=timeout_ms, encoding=encoding
+            order,
+            min_responses=min_responses,
+            timeout_ms=timeout_ms,
+            encoding=encoding,
+            slippage=slippage,
         )
     except (FyndError, httpx.HTTPError, ValidationError) as error:
         logger.debug("quote failed (%s %s notional): %s", side, notional, error)
@@ -193,13 +198,16 @@ def anchor_target_from_sweep(
     timeout_ms: int = 8000,
     max_iters: int = 3,
     tolerance: float = 0.02,
+    slippage: str = DEFAULT_SLIPPAGE,
 ) -> AnchorResult | None:
     """Tight bisection seeded by the sweep's bracket around `target_pct`.
 
-    Each iteration is a slow encoded split quote (`min_responses=0`) so the
-    returned measurement carries path_frank_wolfe routes and the calldata that
-    proves it. Returns None when the sweep never straddles the target (capped or
-    failed) — the sweep-derived level stands as-is.
+    Each iteration is a slow split quote (`min_responses=0`) so the returned
+    measurement carries path_frank_wolfe routes, and asks for the calldata that
+    proves it. A size Fynd prices but declines to encode is re-quoted without
+    encoding, so the level survives with its transaction fields empty rather
+    than vanishing. Returns None when the sweep never straddles the target
+    (capped or failed) — the sweep-derived level stands as-is.
     """
     if len(sweep) < 2:
         return None
@@ -219,24 +227,36 @@ def anchor_target_from_sweep(
     best_diff = float("inf")
     for _ in range(max_iters):
         mid_notional = math.exp((math.log(low_notional) + math.log(high_notional)) / 2)
-        measured = quote_at_notional(
-            fynd,
+        amount = sized_amount(
+            mid_notional,
             side=side,
-            notional=mid_notional,
-            amount=sized_amount(
-                mid_notional,
-                side=side,
-                spot=spot,
-                token_decimals=token.decimals,
-                numeraire_decimals=numeraire.decimals,
-            ),
             spot=spot,
-            token=token,
-            numeraire=numeraire,
-            min_responses=0,
-            timeout_ms=timeout_ms,
-            encoding=True,
+            token_decimals=token.decimals,
+            numeraire_decimals=numeraire.decimals,
         )
+        # Encoding first, because the calldata is the point of anchoring. Fynd
+        # can price a trade it will not encode, though — a large size fails the
+        # price guard at the default slippage — and dropping the level to
+        # protect its proof would discard the measurement, which is the part
+        # nobody can reconstruct. The unencoded retry keeps the number and
+        # records the absent transaction as `no_transaction`.
+        measured = None
+        for wants_encoding in (True, False):
+            measured = quote_at_notional(
+                fynd,
+                side=side,
+                notional=mid_notional,
+                amount=amount,
+                spot=spot,
+                token=token,
+                numeraire=numeraire,
+                min_responses=0,
+                timeout_ms=timeout_ms,
+                encoding=wants_encoding,
+                slippage=slippage,
+            )
+            if measured is not None:
+                break
         if measured is None:
             break
         order_quote, price, solve_time_ms = measured

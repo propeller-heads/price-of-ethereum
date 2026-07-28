@@ -241,6 +241,14 @@ holds nothing, so those links open but revert on the transfer and are recorded
 as `tenderly_status="placeholder_sender"`. Pass an address that actually holds
 the sell token and has approved the router to get `ready` links that simulate.
 
+Encoding can also fail on its own terms. `--slippage` sets the bound the
+calldata is built for, and its 0.1% default is tight enough that Fynd's price
+guard refuses the largest sizes on a deep pair. Those levels are still measured
+— the price is re-quoted without encoding and recorded with
+`tenderly_status="no_transaction"` — so raising the bound buys you proof for the
+top of the curve, not the numbers themselves. The value is stored in each block
+summary, since calldata only means anything against the bound it was built for.
+
 ## What lands on disk
 
 `poe collect --out data` writes three JSONL files per pair and chain, named from
@@ -275,7 +283,7 @@ a dedicated bisection or was read off the sweep.
 **`blocks.jsonl`** — `pair`, `chain_id`, `token_symbol`, `numeraire_symbol`,
 `block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
 `robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
-`search_max`, `samples_per_side`, `duration_ms`.
+`search_max`, `samples_per_side`, `slippage`, `duration_ms`.
 
 **`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
 `transaction_value`, `transaction_data`, `router_fee`, `client_fee`,
