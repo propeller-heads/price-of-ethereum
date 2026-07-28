@@ -196,10 +196,12 @@ def anchor_target_from_sweep(
 ) -> AnchorResult | None:
     """Tight bisection seeded by the sweep's bracket around `target_pct`.
 
-    Each iteration is a slow encoded split quote (`min_responses=0`) so the
-    returned measurement carries path_frank_wolfe routes and the calldata that
-    proves it. Returns None when the sweep never straddles the target (capped or
-    failed) — the sweep-derived level stands as-is.
+    Each iteration is a slow split quote (`min_responses=0`) so the returned
+    measurement carries path_frank_wolfe routes, and asks for the calldata that
+    proves it. A size Fynd prices but declines to encode is re-quoted without
+    encoding, so the level survives with its transaction fields empty rather
+    than vanishing. Returns None when the sweep never straddles the target
+    (capped or failed) — the sweep-derived level stands as-is.
     """
     if len(sweep) < 2:
         return None
@@ -219,24 +221,35 @@ def anchor_target_from_sweep(
     best_diff = float("inf")
     for _ in range(max_iters):
         mid_notional = math.exp((math.log(low_notional) + math.log(high_notional)) / 2)
-        measured = quote_at_notional(
-            fynd,
+        amount = sized_amount(
+            mid_notional,
             side=side,
-            notional=mid_notional,
-            amount=sized_amount(
-                mid_notional,
-                side=side,
-                spot=spot,
-                token_decimals=token.decimals,
-                numeraire_decimals=numeraire.decimals,
-            ),
             spot=spot,
-            token=token,
-            numeraire=numeraire,
-            min_responses=0,
-            timeout_ms=timeout_ms,
-            encoding=True,
+            token_decimals=token.decimals,
+            numeraire_decimals=numeraire.decimals,
         )
+        # Encoding first, because the calldata is the point of anchoring. Fynd
+        # can price a trade it will not encode, though — a large size fails the
+        # price guard at the default slippage — and dropping the level to
+        # protect its proof would discard the measurement, which is the part
+        # nobody can reconstruct. The unencoded retry keeps the number and
+        # records the absent transaction as `no_transaction`.
+        measured = None
+        for wants_encoding in (True, False):
+            measured = quote_at_notional(
+                fynd,
+                side=side,
+                notional=mid_notional,
+                amount=amount,
+                spot=spot,
+                token=token,
+                numeraire=numeraire,
+                min_responses=0,
+                timeout_ms=timeout_ms,
+                encoding=wants_encoding,
+            )
+            if measured is not None:
+                break
         if measured is None:
             break
         order_quote, price, solve_time_ms = measured
