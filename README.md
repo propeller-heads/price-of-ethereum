@@ -232,9 +232,50 @@ stops being monotonic, and recording a history. It calls the same figure
 builders `poe report` does, so it draws exactly what the report draws — use the
 notebook to explore interactively, the report to share a result.
 
+The first cell imports `pandas` and `price_of_ethereum`, so the kernel needs
+both. Jupyter runs notebooks on whichever Python it was launched from, which is
+usually not the environment you installed into — a system-wide or pipx-installed
+`jupyter lab` opens the notebook and then fails on the first cell with
+`ModuleNotFoundError: No module named 'pandas'`, even though the install
+succeeded. Install JupyterLab into the same environment as the package:
+
+With uv, from a clone:
+
 ```bash
-pip install jupyterlab            # alongside the viz extra above
+git clone https://github.com/propeller-heads/price-of-ethereum
+cd price-of-ethereum
+uv sync --extra viz
+uv run --with jupyterlab jupyter lab examples/quickstart.ipynb
+```
+
+With pip, in a virtualenv:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate     # Windows: .venv\Scripts\activate
+pip install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum" jupyterlab
 jupyter lab examples/quickstart.ipynb
+```
+
+Export `TYCHO_API_KEY` in that same shell before launching — the notebook reads
+it from the environment Jupyter inherits, so setting it afterwards in a cell is
+too late for the connect step.
+
+If a cell still cannot import, check which interpreter the kernel is on:
+
+```python
+import sys
+
+print(sys.executable)
+```
+
+That path should be the `.venv` (or uv environment) you installed into. If it
+is not, either relaunch Jupyter from that environment as above, or register the
+environment as its own kernel and select it under Kernel → Change Kernel:
+
+```bash
+pip install ipykernel
+python -m ipykernel install --user --name price-of-ethereum
 ```
 
 ## Development
