@@ -12,7 +12,7 @@ __pycache__/
 # Collected data (never commit measured datasets)
 *.jsonl
 *.parquet
-data/
+/data/
 
 # Jupyter
 .ipynb_checkpoints/
