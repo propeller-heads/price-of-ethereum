@@ -69,6 +69,33 @@ class TestSweepSide:
         )
         assert all(payload["options"]["min_responses"] == 1 for payload in request_log)
 
+    def test_bulk_sweep_never_asks_for_encoding(self) -> None:
+        # Nothing downstream reads calldata off a sweep rung, and encoding it
+        # costs Fynd real work on every one of ~200 quotes per block.
+        grid = numeraire_grid(50.0, 50_000.0, 5)
+        rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
+        fynd, request_log = recording_client()
+        sweep_side(
+            fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+        )
+        assert request_log
+        assert all("encoding_options" not in payload["options"] for payload in request_log)
+
+    def test_quotes_the_amounts_the_rungs_were_sized_to(self) -> None:
+        # The rung owns the sizing; the sweep must not re-derive it.
+        grid = numeraire_grid(50.0, 50_000.0, 5)
+        rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
+        for side, expected in (
+            ("buy", [rung.buy_amount for rung in rungs]),
+            ("sell", [rung.sell_amount for rung in rungs]),
+        ):
+            fynd, request_log = recording_client()
+            sweep_side(
+                fynd, side=side, rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+            )
+            sent = sorted(int(payload["orders"][0]["amount"]) for payload in request_log)
+            assert sent == sorted(expected)
+
     def test_malformed_amount_out_skips_rung(self) -> None:
         grid = numeraire_grid(50.0, 50_000.0, 4)
         rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
@@ -143,6 +170,8 @@ class TestAnchorTargetFromSweep:
         assert anchor is not None
         assert 0 < len(request_log) <= 3
         assert all(payload["options"]["min_responses"] == 0 for payload in request_log)
+        # Anchors are the one place calldata is kept, so they encode.
+        assert all("encoding_options" in payload["options"] for payload in request_log)
         low, high = None, None
         for first, second in itertools.pairwise(sweep):
             if first.impact_pct < 5.0 <= second.impact_pct:

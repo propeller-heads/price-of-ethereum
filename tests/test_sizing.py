@@ -13,6 +13,7 @@ from price_of_ethereum.sizing import (
     atomic,
     numeraire_grid,
     size_rungs,
+    sized_amount,
     spot_price,
 )
 
@@ -51,6 +52,34 @@ def test_numeraire_grid_min_equals_max() -> None:
 def test_numeraire_grid_rejects_zero_samples() -> None:
     with pytest.raises(ValueError):
         numeraire_grid(100.0, 1000.0, 0)
+
+
+def test_every_rung_pairs_the_right_decimals_with_the_right_direction() -> None:
+    # Buying spends the numeraire and selling spends the token, so the two
+    # directions scale by different decimals and only one divides by spot.
+    # Swapping either would still produce plausible integers, so pin both
+    # against the scaling rule rather than against the function under test.
+    grid = numeraire_grid(50.0, 50_000_000.0, 30)
+    rungs = size_rungs(grid, spot=2500.0, token_decimals=18, numeraire_decimals=6)
+    for rung in rungs:
+        assert rung.buy_amount == atomic(rung.notional, 6)
+        assert rung.sell_amount == atomic(rung.notional / 2500.0, 18)
+        assert rung.buy_amount == sized_amount(
+            rung.notional, side="buy", spot=2500.0, token_decimals=18, numeraire_decimals=6
+        )
+        assert rung.sell_amount == sized_amount(
+            rung.notional, side="sell", spot=2500.0, token_decimals=18, numeraire_decimals=6
+        )
+
+
+def test_sized_amount_directions() -> None:
+    assert (
+        sized_amount(1000.0, side="buy", spot=2500.0, token_decimals=18, numeraire_decimals=6)
+        == 1_000 * 10**6
+    )
+    assert sized_amount(
+        1000.0, side="sell", spot=2500.0, token_decimals=18, numeraire_decimals=6
+    ) == atomic(0.4, 18)
 
 
 def test_size_rungs_both_sides_matched_notional() -> None:

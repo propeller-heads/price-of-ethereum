@@ -22,6 +22,8 @@ import httpx
 from pydantic import ValidationError
 
 from price_of_ethereum.fynd.client import FyndClient, FyndError
+from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS
+from price_of_ethereum.pricing import Side
 
 # Default numeraire notional for the marginal spot probe.
 DEFAULT_PROBE_NOTIONAL = 1000.0
@@ -39,6 +41,25 @@ def atomic(units: float, decimals: int) -> int:
     (e.g. $50M at 18 decimals), and these amounts feed signable quotes.
     """
     return int(Decimal(str(units)) * 10**decimals)
+
+
+def sized_amount(
+    notional: float,
+    *,
+    side: Side,
+    spot: float,
+    token_decimals: int,
+    numeraire_decimals: int,
+) -> int:
+    """Base-unit input amount for one numeraire notional in one direction.
+
+    The single place a notional becomes a signable amount: rungs, anchored
+    bisection probes, and mid probes all size through here, so a notional that
+    appears twice can never be sized two different ways.
+    """
+    if side == "buy":
+        return atomic(notional, numeraire_decimals)
+    return atomic(notional / spot, token_decimals)
 
 
 def numeraire_grid(min_notional: float, max_notional: float, samples: int) -> list[float]:
@@ -68,13 +89,13 @@ def spot_price(
     buys the token with `probe_notional` of numeraire (numeraire -> token)."""
     order = fynd.build_order(numeraire, token, atomic(probe_notional, numeraire_decimals))
     try:
-        orders = fynd.quote(order, min_responses=1).orders
+        orders = fynd.quote(order, min_responses=1, encoding=False).orders
     except (FyndError, httpx.HTTPError, ValidationError) as error:
         raise SpotProbeError(f"spot probe request failed: {error}") from error
     if not orders:
         raise SpotProbeError("spot probe returned no orders")
     order_quote = orders[0]
-    if order_quote.status != "success":
+    if order_quote.status != QUOTE_STATUS_SUCCESS:
         raise SpotProbeError(f"spot probe returned status={order_quote.status}")
     try:
         token_out_units = int(order_quote.amount_out) / 10**token_decimals
@@ -108,8 +129,20 @@ def size_rungs(
         raise ValueError("spot must be positive")
     rungs: list[SizedRung] = []
     for notional in grid:
-        buy_amount = atomic(notional, numeraire_decimals)
-        sell_amount = atomic(notional / spot, token_decimals)
+        buy_amount = sized_amount(
+            notional,
+            side="buy",
+            spot=spot,
+            token_decimals=token_decimals,
+            numeraire_decimals=numeraire_decimals,
+        )
+        sell_amount = sized_amount(
+            notional,
+            side="sell",
+            spot=spot,
+            token_decimals=token_decimals,
+            numeraire_decimals=numeraire_decimals,
+        )
         if buy_amount == 0 or sell_amount == 0:
             raise ValueError(
                 f"notional {notional} truncates to a zero base-unit amount "

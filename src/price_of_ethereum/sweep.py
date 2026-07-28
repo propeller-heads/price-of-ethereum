@@ -7,6 +7,10 @@ Anchors re-quote a handful of headline levels with `min_responses=0` — wait fo
 every solver pool — so the path_frank_wolfe split solver contributes routes.
 Every request carries exactly one order; concurrency comes from the thread pool,
 never from batching (each quote needs its own `min_responses`).
+
+Only anchor quotes ask Fynd to encode: calldata and a fee breakdown are kept for
+the headline levels and nothing else reads them, while `amount_out` — the only
+field the sweep measures — is identical either way.
 """
 
 from __future__ import annotations
@@ -21,9 +25,9 @@ import httpx
 from pydantic import ValidationError
 
 from price_of_ethereum.fynd.client import FyndClient, FyndError
-from price_of_ethereum.fynd.models import OrderQuote
+from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS, OrderQuote
 from price_of_ethereum.pricing import Side, execution_price, impact_pct, is_finite_number
-from price_of_ethereum.sizing import SizedRung, atomic
+from price_of_ethereum.sizing import SizedRung, sized_amount
 from price_of_ethereum.tokens import TokenMeta
 
 logger = logging.getLogger(__name__)
@@ -80,6 +84,7 @@ def quote_at_notional(
     *,
     side: Side,
     notional: float,
+    amount: int,
     spot: float,
     token: TokenMeta,
     numeraire: TokenMeta,
@@ -87,17 +92,17 @@ def quote_at_notional(
     timeout_ms: int,
     encoding: bool,
 ) -> tuple[OrderQuote, float, int] | None:
-    """One sized quote in `side` direction; (quote, execution_price, solve_time_ms).
+    """Quote `amount` base units in `side` direction; (quote, execution_price,
+    solve_time_ms). `notional` is the numeraire size `amount` was sized from and
+    only prices the result — callers size through `sizing.sized_amount`.
 
     Returns None on transport errors, non-success status, or an unusable price —
     sweep and anchor callers skip failures rather than abort.
     """
     if side == "buy":
         token_in, token_out = numeraire.address, token.address
-        amount = atomic(notional, numeraire.decimals)
     else:
         token_in, token_out = token.address, numeraire.address
-        amount = atomic(notional / spot, token.decimals)
     order = fynd.build_order(token_in, token_out, amount)
     try:
         result = fynd.quote(
@@ -110,7 +115,7 @@ def quote_at_notional(
         logger.debug("quote returned no orders (%s %s notional)", side, notional)
         return None
     order_quote = result.orders[0]
-    if order_quote.status != "success":
+    if order_quote.status != QUOTE_STATUS_SUCCESS:
         logger.debug("quote status=%s (%s %s notional)", order_quote.status, side, notional)
         return None
     price = execution_price(
@@ -137,7 +142,6 @@ def sweep_side(
     numeraire: TokenMeta,
     max_workers: int = 6,
     timeout_ms: int = 8000,
-    encoding: bool = True,
 ) -> list[SweepPoint]:
     """Fan out one quote per rung (`min_responses=1`), sorted ascending by
     notional. Failed rungs are skipped."""
@@ -147,12 +151,13 @@ def sweep_side(
             fynd,
             side=side,
             notional=rung.notional,
+            amount=rung.buy_amount if side == "buy" else rung.sell_amount,
             spot=spot,
             token=token,
             numeraire=numeraire,
             min_responses=1,
             timeout_ms=timeout_ms,
-            encoding=encoding,
+            encoding=False,
         )
         if measured is None:
             return None
@@ -186,16 +191,15 @@ def anchor_target_from_sweep(
     token: TokenMeta,
     numeraire: TokenMeta,
     timeout_ms: int = 8000,
-    encoding: bool = True,
     max_iters: int = 3,
     tolerance: float = 0.02,
 ) -> AnchorResult | None:
     """Tight bisection seeded by the sweep's bracket around `target_pct`.
 
-    Each iteration is a slow split quote (`min_responses=0`) so the returned
-    measurement carries path_frank_wolfe routes. Returns None when the sweep
-    never straddles the target (capped or failed) — the sweep-derived level
-    stands as-is.
+    Each iteration is a slow encoded split quote (`min_responses=0`) so the
+    returned measurement carries path_frank_wolfe routes and the calldata that
+    proves it. Returns None when the sweep never straddles the target (capped or
+    failed) — the sweep-derived level stands as-is.
     """
     if len(sweep) < 2:
         return None
@@ -219,12 +223,19 @@ def anchor_target_from_sweep(
             fynd,
             side=side,
             notional=mid_notional,
+            amount=sized_amount(
+                mid_notional,
+                side=side,
+                spot=spot,
+                token_decimals=token.decimals,
+                numeraire_decimals=numeraire.decimals,
+            ),
             spot=spot,
             token=token,
             numeraire=numeraire,
             min_responses=0,
             timeout_ms=timeout_ms,
-            encoding=encoding,
+            encoding=True,
         )
         if measured is None:
             break

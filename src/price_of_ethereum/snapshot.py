@@ -16,9 +16,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlencode
 
-from price_of_ethereum.fynd.client import FyndClient
-from price_of_ethereum.fynd.models import OrderQuote
+from price_of_ethereum.fynd.client import DUMMY_SENDER, FyndClient
+from price_of_ethereum.fynd.models import OrderQuote, Transaction
 from price_of_ethereum.pricing import (
     ROBUST_MID_MIN_DEPTH,
     choose_robust_mid,
@@ -26,7 +27,7 @@ from price_of_ethereum.pricing import (
     robust_mid_from_sides,
     robust_mid_probe_depths,
 )
-from price_of_ethereum.sizing import numeraire_grid, size_rungs, spot_price
+from price_of_ethereum.sizing import numeraire_grid, size_rungs, sized_amount, spot_price
 from price_of_ethereum.sweep import (
     AnchorResult,
     Level,
@@ -54,6 +55,10 @@ FALLBACK_PROBE_MAX_DEPTH = 500_000.0
 
 MidSource = Literal["sweep_band", "probe_fallback", "spot_degraded"]
 
+TenderlyStatus = Literal["ready", "placeholder_sender", "missing_sender", "no_transaction"]
+
+TENDERLY_SIMULATOR = "https://dashboard.tenderly.co/simulator/new"
+
 
 @dataclass(frozen=True)
 class SnapshotConfig:
@@ -79,7 +84,6 @@ class SnapshotConfig:
     anchor_bisect_tolerance: float = 0.02
     anchor_accept_tolerance: float = 0.05
     probe_notional: float = 1000.0
-    encoding: bool = True
 
     def __post_init__(self) -> None:
         # An anchor target absent from impact_levels would still run its full
@@ -92,6 +96,43 @@ class SnapshotConfig:
 def parse_quote_block(quote: OrderQuote) -> int | None:
     """Block number a quote was solved against; None when Fynd sent no usable one."""
     return quote.block.number if quote.block.number > 0 else None
+
+
+def build_tenderly_url(
+    *,
+    sender: str | None,
+    transaction: Transaction | None,
+    chain_id: int,
+    block_number: int | None,
+) -> tuple[str | None, TenderlyStatus]:
+    """One-click simulation link for an encoded quote, plus how far to trust it.
+
+    The status names the reason explicitly instead of leaving a bare null. A
+    quote Fynd never encoded is `no_transaction` and an encoded quote with
+    nobody to simulate from is `missing_sender`, both without a link.
+    `placeholder_sender` still carries a link, but it simulates from the
+    quote-only placeholder address, which holds no balance and has approved
+    nothing — the calldata is real, the simulation will revert on the transfer.
+    Only `ready` means the link simulates the trade someone could execute; pass
+    `--sender` with a funded address to get one.
+    """
+    if transaction is None or not transaction.to or not transaction.data:
+        return None, "no_transaction"
+    if not sender:
+        return None, "missing_sender"
+    params = {
+        "network": str(chain_id),
+        "from": sender,
+        "contractAddress": transaction.to,
+        "rawFunctionInput": transaction.data,
+        "value": transaction.value or "0",
+    }
+    if block_number is not None:
+        params["block"] = str(block_number)
+    url = f"{TENDERLY_SIMULATOR}?{urlencode(params)}"
+    if sender.lower() == DUMMY_SENDER.lower():
+        return url, "placeholder_sender"
+    return url, "ready"
 
 
 def route_hash(quote: OrderQuote) -> str | None:
@@ -140,6 +181,7 @@ class Snapshot:
         price: float,
         impact: float,
         quote: OrderQuote,
+        solve_time_ms: int,
     ) -> dict[str, Any]:
         out_decimals = self.token.decimals if side == "buy" else self.numeraire.decimals
         # Gas fields are decimal strings from an external server; malformed
@@ -177,6 +219,7 @@ class Snapshot:
             "gas_estimate": gas_estimate,
             "gas_price": quote.gas_price,
             "gas_cost_token_out": gas_cost_token_out,
+            "solve_time_ms": solve_time_ms,
             "route_hash": route_hash(quote),
             "n_pools": len(pools),
             "protocols": protocols,
@@ -228,6 +271,7 @@ class Snapshot:
                         price=point.price,
                         impact=point.impact_pct,
                         quote=point.quote,
+                        solve_time_ms=point.solve_time_ms,
                     )
                 )
         for level in self.levels:
@@ -240,6 +284,7 @@ class Snapshot:
                 price=level.price,
                 impact=level.actual_impact_pct,
                 quote=level.quote,
+                solve_time_ms=level.solve_time_ms,
             )
             row.update(
                 {
@@ -252,6 +297,51 @@ class Snapshot:
             rows.append(row)
         return rows
 
+    def to_anchor_rows(self, *, sender: str | None) -> list[dict[str, Any]]:
+        """Executable proof for the anchored headline levels: the transaction
+        Fynd encoded, its fee breakdown, and a Tenderly simulation link.
+
+        Only anchored levels are encoded, so only they appear here. These live
+        in their own file rather than in `to_rows()` because calldata runs to
+        kilobytes per level and the rows schema stays flat and cheap to page.
+        """
+        rows: list[dict[str, Any]] = []
+        for level in self.levels:
+            if level.derived_from != "anchored_bisection" or not self._matches_block(level.quote):
+                continue
+            transaction = level.quote.transaction
+            fees = level.quote.fee_breakdown
+            tenderly_url, tenderly_status = build_tenderly_url(
+                sender=sender,
+                transaction=transaction,
+                chain_id=self.chain_id,
+                block_number=self.block_number,
+            )
+            rows.append(
+                {
+                    "chain_id": self.chain_id,
+                    "block_number": self.block_number,
+                    "block_hash": self.block_hash,
+                    "block_timestamp": self.block_timestamp,
+                    "pair": self.pair,
+                    "side": level.side,
+                    "target_impact_pct": level.target_impact_pct,
+                    "size_numeraire": level.notional,
+                    "order_id": level.quote.order_id,
+                    "solve_time_ms": level.solve_time_ms,
+                    "transaction_to": transaction.to if transaction else None,
+                    "transaction_value": transaction.value if transaction else None,
+                    "transaction_data": transaction.data if transaction else None,
+                    "router_fee": fees.router_fee if fees else None,
+                    "client_fee": fees.client_fee if fees else None,
+                    "max_slippage": fees.max_slippage if fees else None,
+                    "min_amount_received": fees.min_amount_received if fees else None,
+                    "tenderly_url": tenderly_url,
+                    "tenderly_status": tenderly_status,
+                }
+            )
+        return rows
+
 
 def _mid_at_depth(
     fynd: FyndClient, config: SnapshotConfig, depth: float, spot: float
@@ -260,23 +350,37 @@ def _mid_at_depth(
         fynd,
         side="buy",
         notional=depth,
+        amount=sized_amount(
+            depth,
+            side="buy",
+            spot=spot,
+            token_decimals=config.token.decimals,
+            numeraire_decimals=config.numeraire.decimals,
+        ),
         spot=spot,
         token=config.token,
         numeraire=config.numeraire,
         min_responses=1,
         timeout_ms=config.timeout_ms,
-        encoding=config.encoding,
+        encoding=False,
     )
     sell = quote_at_notional(
         fynd,
         side="sell",
         notional=depth,
+        amount=sized_amount(
+            depth,
+            side="sell",
+            spot=spot,
+            token_decimals=config.token.decimals,
+            numeraire_decimals=config.numeraire.decimals,
+        ),
         spot=spot,
         token=config.token,
         numeraire=config.numeraire,
         min_responses=1,
         timeout_ms=config.timeout_ms,
-        encoding=config.encoding,
+        encoding=False,
     )
     if buy is None or sell is None:
         return None
@@ -337,7 +441,6 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                 numeraire=config.numeraire,
                 max_workers=config.max_workers,
                 timeout_ms=config.timeout_ms,
-                encoding=config.encoding,
             )
             for side in ("buy", "sell")
         }
@@ -364,7 +467,6 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                 token=config.token,
                 numeraire=config.numeraire,
                 timeout_ms=config.timeout_ms,
-                encoding=config.encoding,
                 max_iters=config.anchor_max_iters,
                 tolerance=config.anchor_bisect_tolerance,
             )

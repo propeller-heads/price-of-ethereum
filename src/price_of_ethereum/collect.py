@@ -9,6 +9,11 @@ quote per cycle rather than the ~240 a sweep spends.
 
 Block *identity* comes from majority reconciliation across the sweep's own
 quotes. The probe decides when to measure, never what to label.
+
+Each block writes three files: `*.rows.jsonl` (every measured rung, flat and
+analysis-friendly), `*.blocks.jsonl` (one summary per block), and
+`*.anchors.jsonl` (the executable transaction behind each headline level, kept
+apart so readers of the first two never page over kilobytes of calldata).
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import httpx
 from pydantic import ValidationError
 
 from price_of_ethereum.fynd.client import FyndClient, FyndError
+from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS
 from price_of_ethereum.sizing import SpotProbeError, atomic
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
 from price_of_ethereum.storage import append_jsonl
@@ -39,19 +45,22 @@ class CollectionAbortedError(RuntimeError):
 class CollectResult:
     blocks_recorded: int
     rows_written: int
+    anchors_written: int
     duplicate_snapshots: int
     idle_probes: int
     failed_cycles: int
     interrupted: bool
     rows_path: Path
     blocks_path: Path
+    anchors_path: Path
 
 
 def probe_block(fynd: FyndClient, config: SnapshotConfig) -> int | None:
     """Block Fynd would currently solve against, from one quote.
 
     Returns None when the probe fails or carries no usable block; callers then
-    fall through to a full snapshot rather than stalling on the cheap path.
+    fall through to a full snapshot rather than stalling on the cheap path. The
+    probe reads nothing but the block number, so it never asks for encoding.
     """
     order = fynd.build_order(
         config.numeraire.address,
@@ -59,20 +68,18 @@ def probe_block(fynd: FyndClient, config: SnapshotConfig) -> int | None:
         atomic(config.probe_notional, config.numeraire.decimals),
     )
     try:
-        result = fynd.quote(
-            order, min_responses=1, timeout_ms=config.timeout_ms, encoding=config.encoding
-        )
+        result = fynd.quote(order, min_responses=1, timeout_ms=config.timeout_ms, encoding=False)
     except (FyndError, httpx.HTTPError, ValidationError) as error:
         logger.debug("block probe failed: %s", error)
         return None
-    if not result.orders or result.orders[0].status != "success":
+    if not result.orders or result.orders[0].status != QUOTE_STATUS_SUCCESS:
         return None
     block_number = result.orders[0].block.number
     return block_number if block_number > 0 else None
 
 
-def paths_for(out_dir: Path | str, *, pair: str, chain_id: int) -> tuple[Path, Path]:
-    """(rows_path, blocks_path) for a pair/chain, e.g. `eth-usdc_1.rows.jsonl`.
+def paths_for(out_dir: Path | str, *, pair: str, chain_id: int) -> tuple[Path, Path, Path]:
+    """(rows, blocks, anchors) paths for a pair/chain, e.g. `eth-usdc_1.rows.jsonl`.
 
     The pair label is reduced to filesystem-safe characters so it can never
     escape `out_dir` on any platform.
@@ -80,10 +87,14 @@ def paths_for(out_dir: Path | str, *, pair: str, chain_id: int) -> tuple[Path, P
     pair_slug = re.sub(r"[^a-z0-9._-]+", "-", pair.lower())
     slug = f"{pair_slug}_{chain_id}"
     out_dir = Path(out_dir)
-    return out_dir / f"{slug}.rows.jsonl", out_dir / f"{slug}.blocks.jsonl"
+    return (
+        out_dir / f"{slug}.rows.jsonl",
+        out_dir / f"{slug}.blocks.jsonl",
+        out_dir / f"{slug}.anchors.jsonl",
+    )
 
 
-def output_paths(out_dir: Path | str, config: SnapshotConfig) -> tuple[Path, Path]:
+def output_paths(out_dir: Path | str, config: SnapshotConfig) -> tuple[Path, Path, Path]:
     return paths_for(out_dir, pair=config.pair, chain_id=config.chain_id)
 
 
@@ -126,15 +137,16 @@ def collect_blocks(
     a row raise `CollectionAbortedError` so a dead Fynd doesn't spin forever.
     Ctrl-C returns the partial result with `interrupted=True`.
 
-    Rows are appended before the block summary, so a block that appears in the
-    summary file has all of its rows on disk; a kill between the two appends
-    leaves orphaned rows that a join against the summary file filters out.
+    Rows and anchors are appended before the block summary, so a block that
+    appears in the summary file has all of its records on disk; a kill between
+    the appends leaves orphans that a join against the summary file filters out.
     Only the immediately-preceding recorded block is deduplicated — a reorg
     returning to an earlier block number is re-recorded on purpose, because
     post-reorg state is a different measurement.
     """
-    rows_path, blocks_path = output_paths(out_dir, config)
-    blocks_recorded = rows_written = duplicate_snapshots = idle_probes = failed_cycles = 0
+    rows_path, blocks_path, anchors_path = output_paths(out_dir, config)
+    blocks_recorded = rows_written = anchors_written = 0
+    duplicate_snapshots = idle_probes = failed_cycles = 0
     consecutive_failures = 0
     interrupted = False
     last_block = _last_recorded_block(blocks_path)
@@ -190,28 +202,43 @@ def collect_blocks(
                 continue
             rows = snapshot.to_rows()
             rows_written += append_jsonl(rows_path, rows)
+            anchors = snapshot.to_anchor_rows(sender=fynd.sender)
+            anchors_written += append_jsonl(anchors_path, anchors)
             append_jsonl(blocks_path, [snapshot.to_block_row()])
             blocks_recorded += 1
             last_block = snapshot.block_number
             logger.info(
-                "recorded block %d for %s: %d rows, robust_mid=%s (%s), %dms",
+                "recorded block %d for %s: %d rows, %d anchors, robust_mid=%s (%s), %dms",
                 snapshot.block_number,
                 config.pair,
                 len(rows),
+                len(anchors),
                 snapshot.robust_mid,
                 snapshot.mid_source,
                 snapshot.duration_ms,
             )
+            # An anchor-free block means every bisection failed to bracket its
+            # target while the bulk sweep still succeeded, which the row and
+            # block files cannot show.
+            if config.anchor_targets and not anchors:
+                logger.warning(
+                    "block %d recorded no anchors for %s; %d targets configured",
+                    snapshot.block_number,
+                    config.pair,
+                    len(config.anchor_targets),
+                )
     except KeyboardInterrupt:
         interrupted = True
         logger.info("interrupted after %d recorded blocks", blocks_recorded)
     return CollectResult(
         blocks_recorded=blocks_recorded,
         rows_written=rows_written,
+        anchors_written=anchors_written,
         duplicate_snapshots=duplicate_snapshots,
         idle_probes=idle_probes,
         failed_cycles=failed_cycles,
         interrupted=interrupted,
         rows_path=rows_path,
         blocks_path=blocks_path,
+        anchors_path=anchors_path,
     )
