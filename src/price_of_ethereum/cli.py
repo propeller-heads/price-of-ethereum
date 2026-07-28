@@ -64,6 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="poe",
         description="Measure block-level onchain price and depth from your own local Fynd.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -71,8 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         ("snapshot", "Collect one block snapshot and print its summary."),
         ("collect", "Record snapshots block by block into JSONL files."),
     ):
-        sub = subparsers.add_parser(name, help=help_text)
-        sub.add_argument("--fynd-url", default=DEFAULT_FYND_URL)
+        sub = subparsers.add_parser(
+            name, help=help_text, formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        )
+        sub.add_argument(
+            "--fynd-url", default=DEFAULT_FYND_URL, help="Fynd instance to measure against."
+        )
         sub.add_argument(
             "--sender",
             default=DUMMY_SENDER,
@@ -85,7 +90,12 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument(
             "--tycho-url",
             default=None,
-            help="Defaults to the hosted Tycho for the chain Fynd reports.",
+            help=(
+                "Tycho used for token metadata only. Defaults to the hosted host for the "
+                "chain Fynd reports; point it at a self-hosted Tycho to override. To skip "
+                "Tycho entirely, describe both tokens with --token-decimals/--token-symbol "
+                "and --numeraire-decimals/--numeraire-symbol, which needs no key."
+            ),
         )
         sub.add_argument(
             "--tycho-api-key",
@@ -118,11 +128,32 @@ def build_parser() -> argparse.ArgumentParser:
         )
         sub.add_argument("--pair", default="ETH/USDC", help="Label stored on every row.")
         sub.add_argument(
-            "--samples-per-side", type=int, default=SNAPSHOT_DEFAULTS["samples_per_side"]
+            "--samples-per-side",
+            type=int,
+            default=SNAPSHOT_DEFAULTS["samples_per_side"],
+            help=(
+                "Trade sizes quoted per side. Part of how robust_mid is defined, not a "
+                "resolution knob: lowering it changes the measurement."
+            ),
         )
-        sub.add_argument("--search-min", type=float, default=SNAPSHOT_DEFAULTS["search_min"])
-        sub.add_argument("--search-max", type=float, default=SNAPSHOT_DEFAULTS["search_max"])
-        sub.add_argument("--max-workers", type=int, default=SNAPSHOT_DEFAULTS["max_workers"])
+        sub.add_argument(
+            "--search-min",
+            type=float,
+            default=SNAPSHOT_DEFAULTS["search_min"],
+            help="Smallest trade size to quote, in whole numeraire units (USDC by default).",
+        )
+        sub.add_argument(
+            "--search-max",
+            type=float,
+            default=SNAPSHOT_DEFAULTS["search_max"],
+            help="Largest trade size to quote, in whole numeraire units (USDC by default).",
+        )
+        sub.add_argument(
+            "--max-workers",
+            type=int,
+            default=SNAPSHOT_DEFAULTS["max_workers"],
+            help="Concurrent quotes in flight against Fynd.",
+        )
         sub.add_argument(
             "--wait-ready-s",
             type=float,
@@ -247,7 +278,10 @@ def make_tycho(args: argparse.Namespace, chain_id: int) -> TychoClient:
     if not api_key:
         raise SystemExit(
             "No Tycho API key: pass --tycho-api-key or set TYCHO_API_KEY "
-            "(free key from https://t.me/fynd_portal_bot)."
+            "(free key from https://t.me/fynd_portal_bot). Tycho is used only to look up "
+            "token decimals and symbol — describe both tokens with --token-decimals/"
+            "--token-symbol and --numeraire-decimals/--numeraire-symbol to measure "
+            "without it."
         )
     chain_entry = CHAIN_TYCHO_HOSTS.get(chain_id)
     if chain_entry is None:

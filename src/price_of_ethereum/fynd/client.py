@@ -13,6 +13,7 @@ pricing only.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Sequence
 from types import TracebackType
@@ -35,6 +36,12 @@ from price_of_ethereum.fynd.models import (
 # order but does not check its balance when merely quoting, so a constant
 # non-zero address works for both pure-pricing and encoding-on quotes.
 DUMMY_SENDER = "0x0000000000000000000000000000000000000001"
+
+# How often to repeat the waiting-for-Fynd line, so a long cold start shows
+# progress without flooding the log.
+PROGRESS_INTERVAL_S = 30.0
+
+logger = logging.getLogger(__name__)
 
 # Slippage tolerance as a decimal string: "0.001" = 0.1%. Fynd requires a string
 # here, not a JSON number — see the note on `EncodingOptions.slippage`.
@@ -61,6 +68,9 @@ class FyndClient:
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.sender = sender
+        # Kept alongside the client so failures can name the URL they tried;
+        # "not healthy" is unactionable without it.
+        self.base_url = base_url
         self._http = httpx.Client(base_url=base_url, timeout=timeout, transport=transport)
 
     def __enter__(self) -> Self:
@@ -157,17 +167,40 @@ class FyndClient:
 
         Each poll uses its own short `poll_timeout_s` so a single stalled request
         cannot overshoot `timeout_s` by the client's full default timeout.
+
+        Progress is logged rather than waited out in silence: minutes of no
+        output is indistinguishable from a hung process, and the usual cause is
+        that nothing is listening on the URL being polled.
         """
         deadline = time.monotonic() + timeout_s
+        started = time.monotonic()
+        announced = False
         while True:
             try:
                 status = self.health(timeout=poll_timeout_s)
                 if status.healthy:
                     return status
-            except httpx.HTTPError:
-                pass
+                reason = "hydrating"
+            except httpx.HTTPError as error:
+                reason = f"unreachable ({type(error).__name__})"
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"Fynd not healthy within {timeout_s:.0f}s")
+                raise TimeoutError(
+                    f"Fynd at {self.base_url} not healthy within {timeout_s:.0f}s: {reason}. "
+                    "Start it with `fynd serve`, or point --fynd-url at a running instance."
+                )
+            if not announced:
+                logger.info(
+                    "waiting up to %.0fs for Fynd at %s (%s)", timeout_s, self.base_url, reason
+                )
+                announced = True
+            elif time.monotonic() - started > PROGRESS_INTERVAL_S:
+                logger.info(
+                    "still waiting for Fynd at %s after %.0fs (%s)",
+                    self.base_url,
+                    time.monotonic() - started,
+                    reason,
+                )
+                started = time.monotonic()
             time.sleep(poll_interval_s)
 
     @staticmethod

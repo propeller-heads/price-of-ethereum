@@ -26,14 +26,15 @@ and it arrives as a tidy DataFrame you can check yourself.
 ## Install
 
 This package is not distributed on a package index. Install it from the
-repository, or pin a tag from the
-[releases](https://github.com/propeller-heads/price-of-ethereum/releases):
+repository:
 
 ```bash
 pip install "git+https://github.com/propeller-heads/price-of-ethereum"
 pip install "price-of-ethereum[viz] @ git+https://github.com/propeller-heads/price-of-ethereum"
-pip install "git+https://github.com/propeller-heads/price-of-ethereum@v0.1.0"
 ```
+
+Nothing is tagged yet, so there is no released version to pin to; append
+`@<commit>` if you need to fix one.
 
 Measuring needs nothing heavy — the base install is `httpx` and `pydantic`, and
 `poe snapshot` and `poe collect` run on it. The extras are additive:
@@ -132,11 +133,12 @@ you never pass it twice. **Only Ethereum mainnet has been verified end to end
 against live liquidity.** The other five are wired up but untested — the host
 answers, and nothing beyond that has been checked.
 
-Point `poe --tycho-url` at a self-hosted or otherwise different Tycho to
-override the host for the chain Fynd reports. To skip Tycho altogether — on a
-chain not in this table, or with no key at all — pass `--token-decimals`,
-`--token-symbol`, `--numeraire-decimals` and `--numeraire-symbol` and `poe`
-measures against your local Fynd alone.
+`--tycho-url` overrides the host for the chain Fynd reports, pointing at a
+self-hosted or otherwise different Tycho. It belongs to the subcommand, not to
+`poe` itself — `poe snapshot --tycho-url …`, not `poe --tycho-url … snapshot`.
+To skip Tycho altogether — on a chain not in this table, or with no key at all
+— pass `--token-decimals`, `--token-symbol`, `--numeraire-decimals` and
+`--numeraire-symbol` and `poe` measures against your local Fynd alone.
 
 ## Quickstart
 
