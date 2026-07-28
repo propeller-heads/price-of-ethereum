@@ -9,6 +9,16 @@ uv sync --all-extras --dev
 This installs the package editable, plus the `data`, `parquet` and `viz` extras
 and the dev tools (`pytest`, `ruff`, `ty`).
 
+The uv version is pinned in `pyproject.toml` under `[tool.uv] required-version`,
+because CI syncs with `--locked` and the lockfile has to match the format the
+running uv expects. Bump that field and re-lock in the same commit.
+
+If you re-generate `uv.lock`, use `uv lock --no-config`. A personal setting in
+`~/.config/uv/uv.toml` — `exclude-newer` in particular — is otherwise written
+into the lockfile, and CI, which has no such file, then re-resolves and fails
+`--locked` with "Resolving despite existing lockfile due to removal of global
+exclude newer".
+
 ## Checks
 
 Run all four before opening a PR — CI runs the same commands:
