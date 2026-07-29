@@ -412,10 +412,21 @@ def _numeraire_price_in_usd(
     decimals = args.usd_reference_decimals
     if decimals is None:
         if tycho is None:
-            raise SystemExit(
-                f"--usd-reference {reference} needs its decimals: pass "
-                "--usd-reference-decimals, or allow Tycho to resolve them."
+            # Describing both tokens is how a run avoids needing Tycho at all, so
+            # the reference's decimals cannot demand it back. A reference the
+            # caller named themselves is different: they asked for this rate.
+            if choice is not None:
+                raise SystemExit(
+                    f"--usd-reference {reference} needs its decimals: pass "
+                    "--usd-reference-decimals, or allow Tycho to resolve them."
+                )
+            logging.getLogger(__name__).warning(
+                "no Tycho to read %s's decimals, so %s is unpriced; sizes stay in "
+                "numeraire units. Pass --usd-reference-decimals to size them.",
+                reference,
+                numeraire.symbol,
             )
+            return None
         decimals = resolve_tokens(tycho, [reference])[reference.lower()].decimals
     try:
         return spot_price(

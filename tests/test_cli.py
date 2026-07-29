@@ -411,6 +411,36 @@ def test_an_explicit_size_is_not_rescaled(monkeypatch: pytest.MonkeyPatch) -> No
     assert build_config(args, chain_id=56, tycho=None, fynd=None).search_min == 7.5
 
 
+def bsc_pair_args(*extra: str) -> Any:
+    return build_parser().parse_args(
+        [
+            "snapshot",
+            *extra,
+            *("--token", "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c"),
+            *("--numeraire", "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c"),
+            *("--token-decimals", "18", "--token-symbol", "BTCB"),
+            *("--numeraire-decimals", "18", "--numeraire-symbol", "WBNB"),
+        ]
+    )
+
+
+def test_describing_both_tokens_still_runs_without_tycho() -> None:
+    # Describing both tokens is how a run avoids needing a Tycho key. Reading the
+    # reference's decimals must not hand that requirement back: the rate is worth
+    # having, not worth refusing to measure anything over.
+    config = build_config(bsc_pair_args(), chain_id=56, tycho=None, fynd=amm_fynd_client())
+    assert config.numeraire_usd is None
+    assert (config.mid_band_min, config.mid_band_max) == (2_500.0, 10_000.0)
+
+
+def test_a_named_reference_without_decimals_is_refused() -> None:
+    # Naming the reference is asking for the rate, so failing to size it is an
+    # error rather than something to degrade past.
+    args = bsc_pair_args("--usd-reference", "0x55d398326f99059fF775485246999027B3197955")
+    with pytest.raises(SystemExit, match="needs its decimals"):
+        build_config(args, chain_id=56, tycho=None, fynd=amm_fynd_client())
+
+
 def test_every_supported_chain_has_a_usd_reference() -> None:
     # A chain with no reference sizes its band in raw numeraire units, which on
     # a WBNB or WETH pair is millions of dollars wide.
