@@ -87,8 +87,11 @@ class SnapshotConfig:
     mid_band_min: float = ROBUST_MID_MIN_DEPTH
     mid_band_max: float = ROBUST_MID_MAX_DEPTH
     # Dollars per numeraire unit, measured through Fynd, or None when sizes are
-    # raw numeraire units. Recorded so a reader knows what the band meant.
+    # raw numeraire units. Recorded so a reader knows what the band meant. It is
+    # measured once, because a band that moved between blocks would make them
+    # incomparable, so `numeraire_usd_block` carries how old it is.
     numeraire_usd: float | None = None
+    numeraire_usd_block: int | None = None
     # Encoding slippage as a decimal string, Fynd's wire type. Only anchored
     # levels encode, and the default is tight enough that Fynd's price guard
     # refuses the largest sizes — loosen it to get calldata for those.
@@ -178,6 +181,7 @@ class Snapshot:
     mid_band_min: float
     mid_band_max: float
     numeraire_usd: float | None
+    numeraire_usd_block: int | None
     slippage: str
     duration_ms: int
 
@@ -264,6 +268,7 @@ class Snapshot:
             "mid_band_min": self.mid_band_min,
             "mid_band_max": self.mid_band_max,
             "numeraire_usd": self.numeraire_usd,
+            "numeraire_usd_block": self.numeraire_usd_block,
             "slippage": self.slippage,
             "duration_ms": self.duration_ms,
         }
@@ -601,6 +606,7 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
         mid_band_min=config.mid_band_min,
         mid_band_max=config.mid_band_max,
         numeraire_usd=config.numeraire_usd,
+        numeraire_usd_block=config.numeraire_usd_block,
         slippage=config.slippage,
         duration_ms=int((time.monotonic() - started) * 1000),
     )

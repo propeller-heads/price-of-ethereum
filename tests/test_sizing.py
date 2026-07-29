@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import httpx
@@ -9,9 +10,11 @@ import pytest
 
 from price_of_ethereum.fynd import FyndClient
 from price_of_ethereum.sizing import (
+    ReferenceRate,
     SpotProbeError,
     atomic,
     numeraire_grid,
+    reference_rate,
     size_rungs,
     sized_amount,
     spot_price,
@@ -124,6 +127,78 @@ def _fynd_returning(amount_out: str, status: str = "success") -> FyndClient:
         return httpx.Response(200, json=quote)
 
     return FyndClient(transport=httpx.MockTransport(handler))
+
+
+def _two_sided_fynd(ask: float, bid: float) -> FyndClient:
+    """A Fynd quoting WETH at `ask` when buying it and `bid` when selling it.
+
+    Both legs price linearly off the amount in, so the rate a probe sees does not
+    depend on the size it happens to be asked for.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        amount_in = int(order["amount"])
+        if order["token_in"].lower() == USDC.lower():
+            amount_out = int(amount_in / 10**6 / ask * 10**18)
+        else:
+            amount_out = int(amount_in / 10**18 * bid * 10**6)
+        return httpx.Response(
+            200,
+            json={
+                "orders": [
+                    {
+                        "order_id": "x",
+                        "status": "success",
+                        "amount_in": str(amount_in),
+                        "amount_out": str(amount_out),
+                        "amount_out_net_gas": str(amount_out),
+                        "gas_estimate": "150000",
+                        "block": {
+                            "number": 21000000,
+                            "hash": "0xabc",
+                            "timestamp": 1730000000,
+                        },
+                    }
+                ],
+                "total_gas_estimate": "150000",
+                "solve_time_ms": 12,
+            },
+        )
+
+    return FyndClient(transport=httpx.MockTransport(handler))
+
+
+def _weth_rate(fynd: FyndClient) -> ReferenceRate:
+    return reference_rate(
+        fynd,
+        numeraire=WETH,
+        numeraire_decimals=18,
+        reference=USDC,
+        reference_decimals=6,
+    )
+
+
+def test_reference_rate_is_the_midpoint_of_both_sides() -> None:
+    # Buying WETH costs 2510 and selling it fetches 2490, so one unit is worth
+    # 2500 and the round trip costs 20, which is 0.8% of it.
+    measured = _weth_rate(_two_sided_fynd(ask=2510.0, bid=2490.0))
+    assert measured.rate == pytest.approx(2500.0, rel=1e-4)
+    assert measured.spread == pytest.approx(0.008, rel=1e-3)
+    assert measured.block == 21000000
+
+
+def test_reference_rate_reports_a_thin_pair_as_a_wide_spread() -> None:
+    # The rate still looks like a number; only the spread says it is untrustworthy.
+    measured = _weth_rate(_two_sided_fynd(ask=2750.0, bid=2250.0))
+    assert measured.rate == pytest.approx(2500.0, rel=1e-4)
+    assert measured.spread == pytest.approx(0.2, rel=1e-3)
+
+
+def test_reference_rate_failure_on_either_leg_raises() -> None:
+    fynd = _fynd_returning("0", status="no_route_found")
+    with pytest.raises(SpotProbeError):
+        _weth_rate(fynd)
 
 
 def test_spot_price_from_probe() -> None:

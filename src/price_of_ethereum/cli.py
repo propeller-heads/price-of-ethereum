@@ -41,7 +41,7 @@ from price_of_ethereum.fynd.client import (
     FyndError,
 )
 from price_of_ethereum.pricing import ROBUST_MID_MAX_DEPTH, ROBUST_MID_MIN_DEPTH
-from price_of_ethereum.sizing import SpotProbeError, spot_price
+from price_of_ethereum.sizing import ReferenceRate, SpotProbeError, reference_rate
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
 from price_of_ethereum.storage import append_jsonl, load_jsonl, load_latest_block_rows
 from price_of_ethereum.tokens import TokenMeta, resolve_tokens
@@ -83,6 +83,13 @@ USD_REFERENCE: dict[int, str] = {
 # Probe size for pricing the numeraire against that reference, in dollars. Small
 # enough to read as a marginal rate rather than a trade with its own impact.
 USD_REFERENCE_PROBE = 1_000.0
+
+# Round-trip cost above which the reference pair is too thin to price against.
+# A dollar probe on a chain's main stablecoin pair crosses one or two fee tiers,
+# so a healthy round trip costs well under 1%; past this the measured rate is
+# mostly the probe's own impact, and a band scaled by it would be wrong in a way
+# nothing downstream can detect.
+MAX_REFERENCE_SPREAD = 0.02
 
 # ERC-20 reports decimals as a uint8, so anything above this is a typo.
 MAX_TOKEN_DECIMALS = 255
@@ -393,13 +400,13 @@ def _numeraire_price_in_usd(
     numeraire: TokenMeta,
     fynd: FyndClient | None,
     tycho: TychoClient | None,
-) -> float | None:
+) -> ReferenceRate | None:
     """What one numeraire unit is worth in dollars, measured through Fynd.
 
     None means sizes stay in raw numeraire units: either there is no Fynd to ask,
-    no reference for this chain, the caller opted out, or the quote failed. The
-    caller records which, because a band of 2,500 means something very different
-    in USDC than in BNB.
+    no reference for this chain, the caller opted out, the quote failed, or the
+    reference pair was too thin to price against. The caller records which,
+    because a band of 2,500 means something very different in USDC than in BNB.
     """
     choice = args.usd_reference
     if choice is not None and choice.lower() == "none":
@@ -408,7 +415,7 @@ def _numeraire_price_in_usd(
     if reference is None or fynd is None:
         return None
     if reference.lower() == numeraire.address.lower():
-        return 1.0  # the numeraire already is the dollar
+        return ReferenceRate(rate=1.0, spread=0.0, block=None)
     decimals = args.usd_reference_decimals
     if decimals is None:
         if tycho is None:
@@ -429,12 +436,12 @@ def _numeraire_price_in_usd(
             return None
         decimals = resolve_tokens(tycho, [reference])[reference.lower()].decimals
     try:
-        return spot_price(
+        measured = reference_rate(
             fynd,
-            token=numeraire.address,
-            token_decimals=numeraire.decimals,
-            numeraire=reference,
-            numeraire_decimals=decimals,
+            numeraire=numeraire.address,
+            numeraire_decimals=numeraire.decimals,
+            reference=reference,
+            reference_decimals=decimals,
             probe_notional=USD_REFERENCE_PROBE,
         )
     except SpotProbeError as error:
@@ -445,6 +452,17 @@ def _numeraire_price_in_usd(
             error,
         )
         return None
+    if abs(measured.spread) > MAX_REFERENCE_SPREAD:
+        logging.getLogger(__name__).warning(
+            "%s/%s costs %.2f%% to round-trip at %.0f, too thin to price against; "
+            "sizes stay in numeraire units",
+            numeraire.symbol,
+            reference,
+            measured.spread * 100.0,
+            USD_REFERENCE_PROBE,
+        )
+        return None
+    return measured
 
 
 def build_config(
@@ -490,8 +508,8 @@ def build_config(
     # Every default below reads as dollars. Divide by the numeraire's dollar
     # price to say the same thing in numeraire units; a rate of None leaves them
     # as raw numeraire units, which is right only for a dollar numeraire.
-    numeraire_usd = _numeraire_price_in_usd(args, chain_id, numeraire_meta, fynd, tycho)
-    scale = 1.0 if numeraire_usd is None else 1.0 / numeraire_usd
+    measured_rate = _numeraire_price_in_usd(args, chain_id, numeraire_meta, fynd, tycho)
+    scale = 1.0 if measured_rate is None else 1.0 / measured_rate.rate
     defaults = SNAPSHOT_DEFAULTS
     return SnapshotConfig(
         token=token_meta,
@@ -508,7 +526,8 @@ def build_config(
         probe_notional=defaults["probe_notional"] * scale,
         mid_band_min=ROBUST_MID_MIN_DEPTH * scale,
         mid_band_max=ROBUST_MID_MAX_DEPTH * scale,
-        numeraire_usd=numeraire_usd,
+        numeraire_usd=None if measured_rate is None else measured_rate.rate,
+        numeraire_usd_block=None if measured_rate is None else measured_rate.block,
         slippage=slippage,
         max_workers=args.max_workers,
     )

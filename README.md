@@ -318,14 +318,25 @@ thing; measuring BTC in BNB, a "2,500" band would mean 2,500 BNB — millions of
 dollars, far outside any sweep — and `robust_mid` would fall back every block.
 
 So `poe` prices the numeraire against a stablecoin on the chain Fynd reports and
-scales those defaults into numeraire units. The rate lands in each block summary
-as `numeraire_usd`, alongside the `mid_band_min`/`mid_band_max` it produced, so a
-reader can see what the band meant. Pass `--usd-reference <address>` to choose a
-different reference, `--usd-reference-decimals` to skip the Tycho lookup for it,
-or `--usd-reference none` to keep every size in raw numeraire units. When there
-is no route to the reference, `numeraire_usd` is null and sizes stay in numeraire
-units — recorded rather than guessed. Setting `--search-min`/`--search-max`
-yourself always wins over the scaling.
+scales those defaults into numeraire units. It quotes both ways — buying the
+numeraire with the reference and selling it back — and takes the midpoint, so
+the rate is not the ask that one direction would give. The round trip is also
+the check on itself: a pair that costs more than 2% to cross cannot price
+anything, and rather than scale by a number that is mostly its own impact, the
+run keeps raw numeraire units and says so.
+
+The rate lands in each block summary as `numeraire_usd`, alongside the
+`mid_band_min`/`mid_band_max` it produced, so a reader can see what the band
+meant. It is measured once per run, because a band that moved between blocks
+would make them incomparable, and `numeraire_usd_block` records the block it was
+measured at so its age on a later row is visible rather than assumed.
+
+Pass `--usd-reference <address>` to choose a different reference,
+`--usd-reference-decimals` to skip the Tycho lookup for it, or `--usd-reference
+none` to keep every size in raw numeraire units. When there is no route to the
+reference, `numeraire_usd` is null and sizes stay in numeraire units — recorded
+rather than guessed. Setting `--search-min`/`--search-max` yourself always wins
+over the scaling.
 
 Each anchored level also writes the transaction behind it to `*.anchors.jsonl`:
 the router address, the calldata, the fee breakdown, and a Tenderly simulation
@@ -378,7 +389,7 @@ a dedicated bisection or was read off the sweep.
 `block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
 `robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
 `search_max`, `samples_per_side`, `mid_band_min`, `mid_band_max`,
-`numeraire_usd`, `slippage`, `duration_ms`.
+`numeraire_usd`, `numeraire_usd_block`, `slippage`, `duration_ms`.
 
 **`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
 `transaction_value`, `transaction_data`, `router_fee`, `client_fee`,

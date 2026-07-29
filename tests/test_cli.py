@@ -26,6 +26,7 @@ from price_of_ethereum.cli import (
 )
 from price_of_ethereum.collect import CollectionAbortedError
 from price_of_ethereum.fynd import FyndClient
+from price_of_ethereum.sizing import ReferenceRate
 from price_of_ethereum.storage import load_jsonl
 from price_of_ethereum.tycho import TychoClient
 
@@ -377,7 +378,10 @@ def test_a_measured_rate_sizes_every_dollar_shaped_default(
 ) -> None:
     # A numeraire worth $2,500 makes a $2,500 band one numeraire unit wide, so
     # every default has to divide by the rate rather than travel as dollars.
-    monkeypatch.setattr("price_of_ethereum.cli._numeraire_price_in_usd", lambda *_, **__: 2_500.0)
+    monkeypatch.setattr(
+        "price_of_ethereum.cli._numeraire_price_in_usd",
+        lambda *_, **__: ReferenceRate(rate=2_500.0, spread=0.0004, block=25_632_157),
+    )
     args = build_parser().parse_args(
         [
             "snapshot",
@@ -397,7 +401,10 @@ def test_a_measured_rate_sizes_every_dollar_shaped_default(
 def test_an_explicit_size_is_not_rescaled(monkeypatch: pytest.MonkeyPatch) -> None:
     # --search-min is already in numeraire units; scaling it would move a size
     # the caller measured for themselves.
-    monkeypatch.setattr("price_of_ethereum.cli._numeraire_price_in_usd", lambda *_, **__: 2_500.0)
+    monkeypatch.setattr(
+        "price_of_ethereum.cli._numeraire_price_in_usd",
+        lambda *_, **__: ReferenceRate(rate=2_500.0, spread=0.0004, block=25_632_157),
+    )
     args = build_parser().parse_args(
         [
             "snapshot",
@@ -439,6 +446,36 @@ def test_a_named_reference_without_decimals_is_refused() -> None:
     args = bsc_pair_args("--usd-reference", "0x55d398326f99059fF775485246999027B3197955")
     with pytest.raises(SystemExit, match="needs its decimals"):
         build_config(args, chain_id=56, tycho=None, fynd=amm_fynd_client())
+
+
+def priced_bsc_config(monkeypatch: pytest.MonkeyPatch, *, spread: float) -> Any:
+    monkeypatch.setattr(
+        "price_of_ethereum.cli.reference_rate",
+        lambda *_, **__: ReferenceRate(rate=2_500.0, spread=spread, block=25_632_157),
+    )
+    args = bsc_pair_args("--usd-reference-decimals", "18")
+    return build_config(args, chain_id=56, tycho=None, fynd=amm_fynd_client())
+
+
+def test_a_priced_reference_sizes_the_band_and_records_its_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The rate is measured once for the run and written to every block row, so
+    # the row carries the block it came from or its age cannot be judged.
+    config = priced_bsc_config(monkeypatch, spread=0.005)
+    assert config.numeraire_usd == 2_500.0
+    assert (config.mid_band_min, config.mid_band_max) == (1.0, 4.0)
+    assert config.numeraire_usd_block == 25_632_157
+
+
+def test_a_reference_pair_too_thin_to_price_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A wide round trip means the rate is mostly the probe's own impact. Scaling
+    # by it would produce a band that looks reasonable and measures the wrong
+    # depths, so the run keeps raw numeraire units instead.
+    config = priced_bsc_config(monkeypatch, spread=0.25)
+    assert config.numeraire_usd is None
+    assert config.numeraire_usd_block is None
+    assert (config.mid_band_min, config.mid_band_max) == (2_500.0, 10_000.0)
 
 
 def test_every_supported_chain_has_a_usd_reference() -> None:

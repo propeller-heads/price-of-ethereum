@@ -76,17 +76,17 @@ def numeraire_grid(min_notional: float, max_notional: float, samples: int) -> li
     return [math.exp(low + (high - low) * i / (samples - 1)) for i in range(samples)]
 
 
-def spot_price(
+def _probe_price(
     fynd: FyndClient,
     *,
     token: str,
     token_decimals: int,
     numeraire: str,
     numeraire_decimals: int,
-    probe_notional: float = DEFAULT_PROBE_NOTIONAL,
-) -> float:
-    """Marginal price of `token` in numeraire units, from one probe quote that
-    buys the token with `probe_notional` of numeraire (numeraire -> token)."""
+    probe_notional: float,
+) -> tuple[float, int | None]:
+    """One quote spending `probe_notional` of numeraire on token, as the price in
+    numeraire units per token unit and the block Fynd solved it against."""
     order = fynd.build_order(numeraire, token, atomic(probe_notional, numeraire_decimals))
     try:
         orders = fynd.quote(order, min_responses=1, encoding=False).orders
@@ -105,7 +105,84 @@ def spot_price(
         ) from error
     if token_out_units <= 0:
         raise SpotProbeError("spot probe returned zero output")
-    return probe_notional / token_out_units
+    return probe_notional / token_out_units, order_quote.block.number
+
+
+def spot_price(
+    fynd: FyndClient,
+    *,
+    token: str,
+    token_decimals: int,
+    numeraire: str,
+    numeraire_decimals: int,
+    probe_notional: float = DEFAULT_PROBE_NOTIONAL,
+) -> float:
+    """Marginal price of `token` in numeraire units, from one probe quote that
+    buys the token with `probe_notional` of numeraire (numeraire -> token)."""
+    price, _ = _probe_price(
+        fynd,
+        token=token,
+        token_decimals=token_decimals,
+        numeraire=numeraire,
+        numeraire_decimals=numeraire_decimals,
+        probe_notional=probe_notional,
+    )
+    return price
+
+
+@dataclass(frozen=True)
+class ReferenceRate:
+    """What one numeraire unit is worth in reference units, quoted both ways.
+
+    `rate` is the midpoint of the two sides. `spread` is `(ask - bid) / rate`,
+    the round-trip cost at the probe size, which says whether the reference pair
+    is deep enough for `rate` to mean anything. `block` is what Fynd solved the
+    first leg against, so a reader can see how far a run has moved since.
+    """
+
+    rate: float
+    spread: float
+    block: int | None
+
+
+def reference_rate(
+    fynd: FyndClient,
+    *,
+    numeraire: str,
+    numeraire_decimals: int,
+    reference: str,
+    reference_decimals: int,
+    probe_notional: float = DEFAULT_PROBE_NOTIONAL,
+) -> ReferenceRate:
+    """Price the numeraire against a reference token from both sides.
+
+    One quote buys the numeraire with `probe_notional` of reference and one sells
+    an equivalent amount back. A single quote would give an ask — inflated by the
+    spread, the router's fee and whatever impact the probe itself causes — and no
+    way to tell a deep pair from a thin one, because any positive number looks
+    like a price.
+    """
+    ask, block = _probe_price(
+        fynd,
+        token=numeraire,
+        token_decimals=numeraire_decimals,
+        numeraire=reference,
+        numeraire_decimals=reference_decimals,
+        probe_notional=probe_notional,
+    )
+    numeraire_back, _ = _probe_price(
+        fynd,
+        token=reference,
+        token_decimals=reference_decimals,
+        numeraire=numeraire,
+        numeraire_decimals=numeraire_decimals,
+        probe_notional=probe_notional / ask,
+    )
+    bid = 1.0 / numeraire_back
+    mid = (ask + bid) / 2.0
+    if not math.isfinite(mid) or mid <= 0:
+        raise SpotProbeError(f"reference probe produced an unusable rate: {mid!r}")
+    return ReferenceRate(rate=mid, spread=(ask - bid) / mid, block=block)
 
 
 @dataclass(frozen=True)
