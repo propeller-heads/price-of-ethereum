@@ -1,11 +1,17 @@
-"""Assemble one block's depth snapshot: two-sided sweep, anchored levels,
-robust mid, and majority-block reconciliation.
+"""Assemble one block's depth snapshot: two-sided sweep, majority-block
+reconciliation, robust mid, and anchored levels.
 
-Block identity comes from the quotes themselves — the majority block among all
-parsed `OrderQuote.block.number` values labels the snapshot (no RPC clock). A
-split is flagged as `mixed_block`; rungs on a *different* parsed block are
-excluded from the mid and from `to_rows()`, while rungs with no parseable block
-are kept.
+Block identity comes from the quotes themselves — the majority block among the
+sweep's parsed `OrderQuote.block.number` values labels the snapshot (no RPC
+clock). Quotes on a *different* parsed block are excluded from the mid and from
+`to_rows()` and flag the snapshot `mixed_block`, while quotes with no parseable
+block are kept.
+
+Every impact the snapshot publishes is measured against `robust_mid`, the
+two-sided midpoint of the shallow band. `spot` — a single numeraire -> token
+probe, and therefore an ask — only sizes trades. Measuring impact against it
+would bill the sell side for the whole bid/ask spread on top of its own impact,
+so the two are deliberately kept to their own jobs.
 """
 
 from __future__ import annotations
@@ -32,12 +38,14 @@ from price_of_ethereum.sizing import numeraire_grid, size_rungs, sized_amount, s
 from price_of_ethereum.sweep import (
     AnchorResult,
     Level,
+    MeasuredRung,
     Side,
     SweepPoint,
     anchor_target_from_sweep,
     derive_level_from_sweep,
     level_from_anchor,
     quote_at_notional,
+    reference_sweep,
     sweep_side,
 )
 from price_of_ethereum.tokens import TokenMeta
@@ -87,8 +95,15 @@ class SnapshotConfig:
     mid_band_min: float = ROBUST_MID_MIN_DEPTH
     mid_band_max: float = ROBUST_MID_MAX_DEPTH
     # Dollars per numeraire unit, measured through Fynd, or None when sizes are
-    # raw numeraire units. Recorded so a reader knows what the band meant.
+    # raw numeraire units. Recorded so a reader knows what the band meant. It is
+    # measured once, because a band that moved between blocks would make them
+    # incomparable, so `numeraire_usd_block` carries how old it is.
     numeraire_usd: float | None = None
+    numeraire_usd_block: int | None = None
+    # Round-trip cost of the pair the rate was measured on, in basis points. A
+    # rate taken across 8 bps and one admitted at the edge of the tolerance are
+    # worth different amounts of trust, and only this says which happened.
+    numeraire_usd_spread_bps: float | None = None
     # Encoding slippage as a decimal string, Fynd's wire type. Only anchored
     # levels encode, and the default is tight enough that Fynd's price guard
     # refuses the largest sizes — loosen it to get calldata for those.
@@ -178,6 +193,8 @@ class Snapshot:
     mid_band_min: float
     mid_band_max: float
     numeraire_usd: float | None
+    numeraire_usd_block: int | None
+    numeraire_usd_spread_bps: float | None
     slippage: str
     duration_ms: int
 
@@ -196,7 +213,12 @@ class Snapshot:
         quote: OrderQuote,
         solve_time_ms: int,
     ) -> dict[str, Any]:
-        out_decimals = self.token.decimals if side == "buy" else self.numeraire.decimals
+        # A quote's gas cost is deducted from what it pays out, so it lands in
+        # whichever token the trade outputs — the token on a buy, the numeraire
+        # on a sell. The row names that token rather than leaving one column
+        # holding two currencies with nothing to tell them apart.
+        out_token = self.token if side == "buy" else self.numeraire
+        out_decimals = out_token.decimals
         # Gas fields are decimal strings from an external server; malformed
         # values null the derived gas columns rather than losing the row.
         gas_cost_token_out: float | None = None
@@ -227,11 +249,16 @@ class Snapshot:
             "amount_out_net_gas": quote.amount_out_net_gas,
             "execution_price": price,
             "impact_pct": impact,
-            "price_impact_bps": derive_price_impact_bps(price, self.robust_mid),
+            "price_impact_bps": derive_price_impact_bps(price, self.robust_mid, side),
+            # Fynd's own figure, passed through untouched. It is signed by trade
+            # direction rather than by cost and is computed against whatever
+            # reference the solver used, so it will not agree with the two
+            # columns above and is not interchangeable with them.
             "price_impact_bps_raw": quote.price_impact_bps,
             "gas_estimate": gas_estimate,
             "gas_price": quote.gas_price,
             "gas_cost_token_out": gas_cost_token_out,
+            "gas_cost_token_out_symbol": out_token.symbol,
             "solve_time_ms": solve_time_ms,
             "route_hash": route_hash(quote),
             "n_pools": len(pools),
@@ -264,6 +291,8 @@ class Snapshot:
             "mid_band_min": self.mid_band_min,
             "mid_band_max": self.mid_band_max,
             "numeraire_usd": self.numeraire_usd,
+            "numeraire_usd_block": self.numeraire_usd_block,
+            "numeraire_usd_spread_bps": self.numeraire_usd_spread_bps,
             "slippage": self.slippage,
             "duration_ms": self.duration_ms,
         }
@@ -426,8 +455,12 @@ def probe_fallback_mid(
 
 
 def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
-    """Measure one full snapshot: spot probe, two-sided sweep, per-target levels
-    with anchored bisection, majority-block reconciliation, robust mid.
+    """Measure one full snapshot: spot probe, two-sided sweep, majority-block
+    reconciliation, robust mid, then per-target levels with anchored bisection.
+
+    The mid settles before any level is derived because it is the reference every
+    published impact is measured against, including the target an anchor bisects
+    toward.
 
     Raises `SpotProbeError` when the spot probe fails — without spot nothing can
     be sized. Every other failure degrades (skipped rungs, fallback mid).
@@ -465,8 +498,61 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
             )
             for side in ("buy", "sell")
         }
-        curve_buy = futures_by_side["buy"].result()
-        curve_sell = futures_by_side["sell"].result()
+        measured_buy: list[MeasuredRung] = futures_by_side["buy"].result()
+        measured_sell: list[MeasuredRung] = futures_by_side["sell"].result()
+
+    # Block identity is the majority block across the sweep, and the sweep alone.
+    # The sweep is the measurement; anchors refine a handful of its rungs and are
+    # issued strictly after it, so letting them vote would let a later block
+    # relabel a snapshot the sweep had already settled. It also has to be settled
+    # here, before any level is derived: the robust mid comes from the rungs on
+    # this block, and every impact in the snapshot — swept rungs, anchor targets,
+    # published basis points — is measured against that one number.
+    measured_quotes = [rung.quote for rung in measured_buy + measured_sell]
+    block_counts: dict[int, int] = {}
+    for quote in measured_quotes:
+        number = parse_quote_block(quote)
+        if number is not None:
+            block_counts[number] = block_counts.get(number, 0) + 1
+    block_number: int | None = None
+    if block_counts:
+        block_number = max(block_counts, key=lambda number: block_counts[number])
+
+    def matches_block(quote: OrderQuote) -> bool:
+        number = parse_quote_block(quote)
+        return number is None or block_number is None or number == block_number
+
+    matching_buy = [rung for rung in measured_buy if matches_block(rung.quote)]
+    matching_sell = [rung for rung in measured_sell if matches_block(rung.quote)]
+    robust = robust_mid_from_sides(
+        [(rung.notional, rung.price) for rung in matching_buy],
+        [(rung.notional, rung.price) for rung in matching_sell],
+        band_min=config.mid_band_min,
+        band_max=config.mid_band_max,
+    )
+    mid_source: MidSource = "sweep_band"
+    if robust is None:
+        logger.warning(
+            "robust mid for %s: no usable sweep pairs (%d buy / %d sell rungs kept); "
+            "falling back to dedicated probes",
+            config.pair,
+            len(matching_buy),
+            len(matching_sell),
+        )
+        max_depth = matching_buy[-1].notional if matching_buy else config.mid_band_max
+        robust = probe_fallback_mid(fynd, config, spot, max_depth)
+        mid_source = "probe_fallback"
+    if robust is None:
+        # Without a two-sided reference the only number left is the one-directional
+        # spot probe, which charges the sell side the full spread as impact.
+        # `mid_source` is how a reader tells that snapshot from a sound one.
+        logger.warning("robust mid for %s: every mid probe failed; degrading to spot", config.pair)
+        robust = (spot, config.mid_band_min)
+        mid_source = "spot_degraded"
+    robust_mid, median_depth = robust
+
+    curve_buy = reference_sweep(measured_buy, side="buy", reference=robust_mid)
+    curve_sell = reference_sweep(measured_sell, side="sell", reference=robust_mid)
 
     sides: tuple[tuple[Side, list[SweepPoint]], ...] = (("buy", curve_buy), ("sell", curve_sell))
     levels: list[Level] = []
@@ -485,6 +571,7 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                 target_pct=target,
                 sweep=sweep,
                 spot=spot,
+                impact_reference=robust_mid,
                 token=config.token,
                 numeraire=config.numeraire,
                 timeout_ms=config.timeout_ms,
@@ -509,59 +596,25 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
                     )
                     break
 
-    # Majority-block reconciliation over every kept quote. Levels are counted
-    # before sweeps and share quote objects with sweep rungs, so an anchored
-    # level's block carries a little extra weight in the vote.
-    all_quotes = [level.quote for level in levels]
-    all_quotes += [point.quote for point in curve_buy]
-    all_quotes += [point.quote for point in curve_sell]
-    block_counts: dict[int, int] = {}
-    for quote in all_quotes:
-        number = parse_quote_block(quote)
+    # Anchors do not decide the label, but they are still evidence about it: a
+    # level solved against another block means the snapshot spans more than one,
+    # and `to_rows` drops that level rather than publishing it under this block.
+    observed_blocks = set(block_counts)
+    for level in levels:
+        number = parse_quote_block(level.quote)
         if number is not None:
-            block_counts[number] = block_counts.get(number, 0) + 1
-    block_number: int | None = None
-    mixed_block = False
-    if block_counts:
-        block_number = max(block_counts, key=lambda number: block_counts[number])
-        mixed_block = len(block_counts) > 1
-        if mixed_block:
-            logger.warning(
-                "mixed-block snapshot for %s: %s -> labelled %d",
-                config.pair,
-                block_counts,
-                block_number,
-            )
-
-    def matches_block(quote: OrderQuote) -> bool:
-        number = parse_quote_block(quote)
-        return number is None or block_number is None or number == block_number
-
-    matching_buy = [point for point in curve_buy if matches_block(point.quote)]
-    matching_sell = [point for point in curve_sell if matches_block(point.quote)]
-    robust = robust_mid_from_sides(
-        [(point.notional, point.price) for point in matching_buy],
-        [(point.notional, point.price) for point in matching_sell],
-        band_min=config.mid_band_min,
-        band_max=config.mid_band_max,
-    )
-    mid_source: MidSource = "sweep_band"
-    if robust is None:
+            observed_blocks.add(number)
+    mixed_block = len(observed_blocks) > 1
+    if mixed_block:
         logger.warning(
-            "robust mid for %s: no usable sweep pairs (%d buy / %d sell rungs kept); "
-            "falling back to dedicated probes",
+            "mixed-block snapshot for %s: swept %s, anchors reached %s -> labelled %s",
             config.pair,
-            len(matching_buy),
-            len(matching_sell),
+            block_counts,
+            sorted(observed_blocks - set(block_counts)),
+            block_number,
         )
-        max_depth = matching_buy[-1].notional if matching_buy else config.mid_band_max
-        robust = probe_fallback_mid(fynd, config, spot, max_depth)
-        mid_source = "probe_fallback"
-    if robust is None:
-        logger.warning("robust mid for %s: every mid probe failed; degrading to spot", config.pair)
-        robust = (spot, config.mid_band_min)
-        mid_source = "spot_degraded"
-    robust_mid, median_depth = robust
+
+    all_quotes = measured_quotes + [level.quote for level in levels]
 
     block_hash: str | None = None
     block_timestamp: int | None = None
@@ -601,6 +654,8 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
         mid_band_min=config.mid_band_min,
         mid_band_max=config.mid_band_max,
         numeraire_usd=config.numeraire_usd,
+        numeraire_usd_block=config.numeraire_usd_block,
+        numeraire_usd_spread_bps=config.numeraire_usd_spread_bps,
         slippage=config.slippage,
         duration_ms=int((time.monotonic() - started) * 1000),
     )

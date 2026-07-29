@@ -56,23 +56,32 @@ class TestExecutionPrice:
 
 
 class TestImpactPct:
-    def test_buy_above_spot_is_positive(self) -> None:
+    def test_buy_above_reference_is_positive(self) -> None:
         assert impact_pct(2525.0, 2500.0, "buy") == pytest.approx(1.0)
 
-    def test_sell_below_spot_is_positive(self) -> None:
+    def test_sell_below_reference_is_positive(self) -> None:
         assert impact_pct(2475.0, 2500.0, "sell") == pytest.approx(1.0)
+
+    def test_a_side_that_beats_the_reference_is_negative(self) -> None:
+        assert impact_pct(2475.0, 2500.0, "buy") == pytest.approx(-1.0)
+        assert impact_pct(2525.0, 2500.0, "sell") == pytest.approx(-1.0)
 
 
 class TestDerivePriceImpactBps:
-    def test_signed_and_rounded_to_one_decimal(self) -> None:
-        assert derive_price_impact_bps(2525.0, 2500.0) == 100.0
-        assert derive_price_impact_bps(2475.0, 2500.0) == -100.0
-        assert derive_price_impact_bps(2500.03, 2500.0) == 0.1
+    def test_costly_side_is_positive_and_rounded_to_one_decimal(self) -> None:
+        assert derive_price_impact_bps(2525.0, 2500.0, "buy") == 100.0
+        assert derive_price_impact_bps(2475.0, 2500.0, "sell") == 100.0
+        assert derive_price_impact_bps(2500.03, 2500.0, "buy") == 0.1
+
+    def test_is_impact_pct_in_a_hundredth_of_the_unit(self) -> None:
+        for price, side in ((2525.0, "buy"), (2475.0, "sell"), (2475.0, "buy")):
+            bps = derive_price_impact_bps(price, 2500.0, side)
+            assert bps == pytest.approx(impact_pct(price, 2500.0, side) * 100.0)
 
     def test_none_on_missing_inputs(self) -> None:
-        assert derive_price_impact_bps(None, 2500.0) is None
-        assert derive_price_impact_bps(2500.0, None) is None
-        assert derive_price_impact_bps(0.0, 2500.0) is None
+        assert derive_price_impact_bps(None, 2500.0, "buy") is None
+        assert derive_price_impact_bps(2500.0, None, "buy") is None
+        assert derive_price_impact_bps(0.0, 2500.0, "buy") is None
 
 
 class TestChooseRobustMid:
@@ -122,7 +131,8 @@ class TestRobustMidFromSides:
     def test_pairs_by_rounded_notional(self) -> None:
         buy = [(2999.999, 2510.0), (5000.0, 2512.0), (9000.0, 2514.0)]
         sell = [(3000.001, 2490.0), (5000.0, 2492.0), (9000.0, 2494.0)]
-        # 2999.999 and 3000.001 both round to 3000.0 and pair up.
+        # Six figures absorbs the float gap between the two sides, so 2999.999
+        # and 3000.001 land on one key and pair up.
         assert robust_mid_from_sides(buy, sell) == (2502.0, 5000.0)
 
     def test_unmatched_sell_rungs_skipped(self) -> None:

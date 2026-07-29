@@ -8,12 +8,12 @@ Ethereum mainnet. Nothing here is simulated or hand-written.
 | pair | `ETH/USDC` |
 | chain id | 1 |
 | tokens | `WETH` / `USDC` |
-| blocks | 25,632,157 to 25,632,168 (12 of them) |
-| block times | 2026-07-28 15:16:23 to 15:18:47 UTC |
+| blocks | 25,638,023 to 25,638,034 (12 of them) |
+| block times | 2026-07-29 10:54:47 to 10:56:59 UTC |
 | sizes per side | 100 |
 | search range | 50 to 50,000,000 USDC |
 | rows in the last block | 236 |
-| mixed blocks | 0 |
+| mixed blocks | 1 |
 | degraded mids | 0 |
 
 The three files, and every field in them, are documented in the repository

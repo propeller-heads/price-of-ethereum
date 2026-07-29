@@ -128,3 +128,19 @@ Do not "fix" this test by updating the fixture to match new output. A failure
 here means the measurement method diverged from production, which is exactly
 what the test exists to catch. If you believe the reference fixture itself is
 wrong, that's a discussion to have before touching it, not a one-line fix.
+
+**The fixture is currently self-referential, and that is a known gap.** Price
+impact used to be measured against `spot`, which is a one-directional probe that
+buys the token and is therefore an ask, not a mid. That charged the whole
+bid/ask spread to the sell side and let a buy show negative cost. Impact is now
+measured against `robust_mid`, which is two-sided by construction, and the
+fixture was regenerated for it: every buy impact rose by half the spread, every
+sell impact fell by the same, and every sell `price_impact_bps` changed sign.
+The arithmetic is checkable — a $50,000 buy on the simulated pool is priced at
+exactly 2500.5, which is exactly 0.02% over a 2500.0 mid and an awkward 0.0196%
+over the 2500.01 ask.
+
+Until the production collector measures impact the same way, this file no longer
+cross-checks anything outside this repository; it pins this SDK against itself.
+Restoring the independent signal means regenerating it from production once
+production carries the same reference.

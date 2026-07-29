@@ -15,8 +15,8 @@
     "max_workers": 4
   },
   "spot_price": 2500.01,
-  "robust_mid": 2500.000001,
-  "median_depth": 6947.48,
+  "robust_mid": 2500.0,
+  "median_depth": 6947.47747,
   "block_number": 12345,
   "block_hash": "0xabababababababababababababababababababababababababababababababab",
   "block_timestamp": 1700000000,
@@ -27,154 +27,154 @@
       {
         "amount_usd": 50.0,
         "price": 2500.00055,
-        "impact_pct": -0.000378
+        "impact_pct": 2.2e-05
       },
       {
-        "amount_usd": 134.13,
-        "price": 2500.001356,
-        "impact_pct": -0.000346
+        "amount_usd": 134.13479,
+        "price": 2500.00136,
+        "impact_pct": 5.4e-05
       },
       {
-        "amount_usd": 359.84,
-        "price": 2500.003602,
-        "impact_pct": -0.000256
+        "amount_usd": 359.842837,
+        "price": 2500.0036,
+        "impact_pct": 0.000144
       },
       {
-        "amount_usd": 965.35,
-        "price": 2500.009655,
-        "impact_pct": -1.4e-05
+        "amount_usd": 965.348864,
+        "price": 2500.00965,
+        "impact_pct": 0.000386
       },
       {
-        "amount_usd": 2589.74,
-        "price": 2500.025898,
-        "impact_pct": 0.000636
+        "amount_usd": 2589.73734,
+        "price": 2500.0259,
+        "impact_pct": 0.001036
       },
       {
-        "amount_usd": 6947.48,
-        "price": 2500.069475,
-        "impact_pct": 0.002379
+        "amount_usd": 6947.47747,
+        "price": 2500.06948,
+        "impact_pct": 0.002779
       },
       {
-        "amount_usd": 18637.97,
+        "amount_usd": 18637.9686,
         "price": 2500.18638,
-        "impact_pct": 0.007055
+        "impact_pct": 0.007455
       },
       {
         "amount_usd": 50000.0,
         "price": 2500.5,
-        "impact_pct": 0.0196
+        "impact_pct": 0.02
       },
       {
         "amount_usd": 134134.79,
-        "price": 2501.341348,
-        "impact_pct": 0.053254
+        "price": 2501.34135,
+        "impact_pct": 0.053654
       },
       {
-        "amount_usd": 359842.84,
-        "price": 2503.598428,
-        "impact_pct": 0.143537
+        "amount_usd": 359842.837,
+        "price": 2503.59843,
+        "impact_pct": 0.143937
       },
       {
-        "amount_usd": 965348.86,
-        "price": 2509.653489,
-        "impact_pct": 0.385738
+        "amount_usd": 965348.864,
+        "price": 2509.65349,
+        "impact_pct": 0.38614
       },
       {
         "amount_usd": 2589737.34,
-        "price": 2525.897373,
-        "impact_pct": 1.035491
+        "price": 2525.89737,
+        "impact_pct": 1.035895
       },
       {
         "amount_usd": 6947477.47,
-        "price": 2569.474775,
-        "impact_pct": 2.77858
+        "price": 2569.47477,
+        "impact_pct": 2.778991
       },
       {
         "amount_usd": 18637968.6,
-        "price": 2686.379686,
-        "impact_pct": 7.454758
+        "price": 2686.37969,
+        "impact_pct": 7.455188
       },
       {
         "amount_usd": 50000000.0,
         "price": 3000.0,
-        "impact_pct": 19.99952
+        "impact_pct": 20.0
       }
     ],
     "sell": [
       {
         "amount_usd": 50.0,
         "price": 2499.9995,
-        "impact_pct": 0.00042
+        "impact_pct": 2e-05
       },
       {
-        "amount_usd": 134.13,
-        "price": 2499.998654,
-        "impact_pct": 0.000454
+        "amount_usd": 134.13479,
+        "price": 2499.99865,
+        "impact_pct": 5.4e-05
       },
       {
-        "amount_usd": 359.84,
+        "amount_usd": 359.842837,
         "price": 2499.9964,
-        "impact_pct": 0.000544
+        "impact_pct": 0.000144
       },
       {
-        "amount_usd": 965.35,
-        "price": 2499.990345,
-        "impact_pct": 0.000786
+        "amount_usd": 965.348864,
+        "price": 2499.99035,
+        "impact_pct": 0.000386
       },
       {
-        "amount_usd": 2589.74,
-        "price": 2499.974103,
-        "impact_pct": 0.001436
+        "amount_usd": 2589.73734,
+        "price": 2499.9741,
+        "impact_pct": 0.001036
       },
       {
-        "amount_usd": 6947.48,
-        "price": 2499.930527,
-        "impact_pct": 0.003179
+        "amount_usd": 6947.47747,
+        "price": 2499.93053,
+        "impact_pct": 0.002779
       },
       {
-        "amount_usd": 18637.97,
-        "price": 2499.813635,
-        "impact_pct": 0.007855
+        "amount_usd": 18637.9686,
+        "price": 2499.81363,
+        "impact_pct": 0.007455
       },
       {
         "amount_usd": 50000.0,
-        "price": 2499.500102,
-        "impact_pct": 0.020396
+        "price": 2499.5001,
+        "impact_pct": 0.019996
       },
       {
         "amount_usd": 134134.79,
-        "price": 2498.659377,
-        "impact_pct": 0.054025
+        "price": 2498.65938,
+        "impact_pct": 0.053625
       },
       {
-        "amount_usd": 359842.84,
-        "price": 2496.406758,
-        "impact_pct": 0.144129
+        "amount_usd": 359842.837,
+        "price": 2496.40676,
+        "impact_pct": 0.14373
       },
       {
-        "amount_usd": 965348.86,
-        "price": 2490.383682,
-        "impact_pct": 0.385051
+        "amount_usd": 965348.864,
+        "price": 2490.38368,
+        "impact_pct": 0.384653
       },
       {
         "amount_usd": 2589737.34,
-        "price": 2474.368247,
-        "impact_pct": 1.025666
+        "price": 2474.36825,
+        "impact_pct": 1.02527
       },
       {
         "amount_usd": 6947477.47,
-        "price": 2432.403983,
-        "impact_pct": 2.70423
+        "price": 2432.40398,
+        "impact_pct": 2.703841
       },
       {
         "amount_usd": 18637968.6,
         "price": 2326.55189,
-        "impact_pct": 6.938297
+        "impact_pct": 6.937924
       },
       {
         "amount_usd": 50000000.0,
-        "price": 2083.334722,
-        "impact_pct": 16.666944
+        "price": 2083.33472,
+        "impact_pct": 16.666611
       }
     ]
   },
@@ -182,9 +182,9 @@
     {
       "side": "buy",
       "target_impact_pct": 0.1,
-      "actual_impact_pct": 0.143537,
-      "amount_usd": 359842.84,
-      "effective_price": 2503.598428,
+      "actual_impact_pct": 0.143937,
+      "amount_usd": 359842.837,
+      "effective_price": 2503.59843,
       "bound": "none",
       "target_reached": true,
       "derived_from": "nearest_real_quote",
@@ -194,21 +194,21 @@
     {
       "side": "sell",
       "target_impact_pct": 0.1,
-      "actual_impact_pct": 0.144129,
-      "amount_usd": 359842.84,
-      "effective_price": 2496.406758,
+      "actual_impact_pct": 0.14373,
+      "amount_usd": 359842.837,
+      "effective_price": 2496.40676,
       "bound": "none",
       "target_reached": true,
       "derived_from": "nearest_real_quote",
-      "price_impact_bps": -14.4,
+      "price_impact_bps": 14.4,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 0.5,
-      "actual_impact_pct": 0.49378,
+      "actual_impact_pct": 0.494182,
       "amount_usd": 1235455.61,
-      "effective_price": 2512.354556,
+      "effective_price": 2512.35456,
       "bound": "none",
       "target_reached": true,
       "derived_from": "anchored_bisection",
@@ -218,21 +218,21 @@
     {
       "side": "sell",
       "target_impact_pct": 0.5,
-      "actual_impact_pct": 0.492148,
+      "actual_impact_pct": 0.49175,
       "amount_usd": 1235455.61,
-      "effective_price": 2487.706247,
+      "effective_price": 2487.70625,
       "bound": "none",
       "target_reached": true,
       "derived_from": "anchored_bisection",
-      "price_impact_bps": -49.2,
+      "price_impact_bps": 49.2,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 1.0,
-      "actual_impact_pct": 0.915278,
+      "actual_impact_pct": 0.915681,
       "amount_usd": 2289202.91,
-      "effective_price": 2522.892029,
+      "effective_price": 2522.89203,
       "bound": "max",
       "target_reached": false,
       "derived_from": "anchored_bisection",
@@ -242,19 +242,19 @@
     {
       "side": "sell",
       "target_impact_pct": 1.0,
-      "actual_impact_pct": 0.907765,
+      "actual_impact_pct": 0.907369,
       "amount_usd": 2289202.91,
-      "effective_price": 2477.315777,
+      "effective_price": 2477.31578,
       "bound": "max",
       "target_reached": false,
       "derived_from": "anchored_bisection",
-      "price_impact_bps": -90.7,
+      "price_impact_bps": 90.7,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 5.0,
-      "actual_impact_pct": 5.148833,
+      "actual_impact_pct": 5.149254,
       "amount_usd": 12873134.0,
       "effective_price": 2628.73134,
       "bound": "none",
@@ -266,21 +266,21 @@
     {
       "side": "sell",
       "target_impact_pct": 5.0,
-      "actual_impact_pct": 4.897452,
+      "actual_impact_pct": 4.897071,
       "amount_usd": 12873134.0,
-      "effective_price": 2377.573215,
+      "effective_price": 2377.57322,
       "bound": "none",
       "target_reached": true,
       "derived_from": "anchored_bisection",
-      "price_impact_bps": -489.7,
+      "price_impact_bps": 489.7,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 10.0,
-      "actual_impact_pct": 9.540727,
-      "amount_usd": 23852913.48,
-      "effective_price": 2738.529135,
+      "actual_impact_pct": 9.541165,
+      "amount_usd": 23852913.5,
+      "effective_price": 2738.52913,
       "bound": "none",
       "target_reached": true,
       "derived_from": "anchored_bisection",
@@ -290,19 +290,19 @@
     {
       "side": "sell",
       "target_impact_pct": 10.0,
-      "actual_impact_pct": 9.742537,
-      "amount_usd": 26984405.93,
-      "effective_price": 2256.445598,
+      "actual_impact_pct": 9.742176,
+      "amount_usd": 26984405.9,
+      "effective_price": 2256.4456,
       "bound": "none",
       "target_reached": true,
       "derived_from": "anchored_bisection",
-      "price_impact_bps": -974.2,
+      "price_impact_bps": 974.2,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 25.0,
-      "actual_impact_pct": 19.99952,
+      "actual_impact_pct": 20.0,
       "amount_usd": 50000000.0,
       "effective_price": 3000.0,
       "bound": "max",
@@ -314,19 +314,19 @@
     {
       "side": "sell",
       "target_impact_pct": 25.0,
-      "actual_impact_pct": 16.666944,
+      "actual_impact_pct": 16.666611,
       "amount_usd": 50000000.0,
-      "effective_price": 2083.334722,
+      "effective_price": 2083.33472,
       "bound": "max",
       "target_reached": false,
       "derived_from": "nearest_real_quote",
-      "price_impact_bps": -1666.7,
+      "price_impact_bps": 1666.7,
       "gas_cost_token_out": 0.001
     },
     {
       "side": "buy",
       "target_impact_pct": 50.0,
-      "actual_impact_pct": 19.99952,
+      "actual_impact_pct": 20.0,
       "amount_usd": 50000000.0,
       "effective_price": 3000.0,
       "bound": "max",
@@ -338,13 +338,13 @@
     {
       "side": "sell",
       "target_impact_pct": 50.0,
-      "actual_impact_pct": 16.666944,
+      "actual_impact_pct": 16.666611,
       "amount_usd": 50000000.0,
-      "effective_price": 2083.334722,
+      "effective_price": 2083.33472,
       "bound": "max",
       "target_reached": false,
       "derived_from": "nearest_real_quote",
-      "price_impact_bps": -1666.7,
+      "price_impact_bps": 1666.7,
       "gas_cost_token_out": 0.001
     }
   ],

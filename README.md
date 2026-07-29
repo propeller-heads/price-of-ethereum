@@ -9,7 +9,9 @@ and tax before measuring (Fynd needs a Tycho API key regardless, to index the
 liquidity it quotes against). Pass `--token-decimals`, `--token-symbol`,
 `--numeraire-decimals` and `--numeraire-symbol` to skip even that lookup.
 
-> Status: verified against Ethereum mainnet. Treat the API as unstable until 1.0.
+> Status: verified end to end against Ethereum mainnet; the other five supported
+> chains have had their block timing and probe cost measured live (2026-07-28),
+> but none has a collected end-to-end dataset. Treat the API as unstable until 1.0.
 
 ## Why
 
@@ -42,7 +44,7 @@ screenshot of exactly that.
 
 **Both are real measurements, and both record which one.** The report and the
 chart above come from [`examples/data`](./examples/data) — ETH/USDC on Ethereum
-mainnet, 12 blocks, 25,632,157–25,632,168, recorded 2026-07-28 — a dataset
+mainnet, 12 blocks, 25,638,023–25,638,034, recorded 2026-07-29 — a dataset
 committed beside them, with a note stating exactly what was measured and when.
 The report is rendered from those three files and nothing else, so
 `poe report --out examples/data` rebuilds it with no Fynd, no key and no network;
@@ -192,20 +194,24 @@ flag on Fynd and nothing here:
 
 `poe` reads the chain id from Fynd's `/v1/info` and picks the matching host, so
 you never pass it twice. **Only Ethereum mainnet has been verified end to end
-against live liquidity.** The other five are wired up but untested — the host
-answers, and nothing beyond that has been checked.
+against live liquidity** — it is the one chain with a collected dataset behind
+it. On the other five, quoting was exercised far enough to time it: each one's
+block interval and the cost of a single probe were measured against live
+liquidity on 2026-07-28, which is where the poll intervals below come from. What
+has not been done there is a full collection run on a real pair, so treat their
+depth numbers as unproven in a way the timing numbers are not.
 
 #### Fast chains break the single-block premise
 
 A snapshot is one measurement of one block: roughly 220 quotes that all have to
 land before the chain moves on, which is what the bundled worker-pool config is
-tuned for. That tuning was measured on Ethereum, where a snapshot takes 2.5–3.0 s
+tuned for. That tuning was measured on Ethereum, where a snapshot takes 3.6–4.2 s
 against a ~12 s block, and the margin is comfortable.
 
 Every other chain Fynd routes on has shorter blocks — published figures run from
 about 2 s on `base` down to roughly 250 ms on `arbitrum` — while snapshot
 duration depends on how much liquidity that chain's graph holds, so it is not
-the same 2.5–3.0 s everywhere. Whether a snapshot fits is therefore an empirical
+the same 3.6–4.2 s everywhere. Whether a snapshot fits is therefore an empirical
 question per chain, and this SDK answers it from its own output rather than from
 a table:
 
@@ -262,7 +268,7 @@ poe report --out data --output report.html   # self-contained HTML report
 
 A snapshot is roughly 220 quotes against your Fynd: 100 sizes per side, plus the
 anchored levels and a handful of probes. That has to fit inside one block, which
-is what the bundled worker-pool config is tuned for — 2.5-3.0 s per snapshot on
+is what the bundled worker-pool config is tuned for — 3.6-4.2 s per snapshot on
 mainnet. `collect` then waits for the next block, so wall-clock is set by the
 chain rather than by this tool: 50 blocks on Ethereum is about ten minutes and
 some 11,000 quotes, all against a server you are running.
@@ -307,9 +313,18 @@ midpoints in the $2,500–$10,000 numeraire band (with dedicated-probe and
 spot fallbacks, reported in `mid_source`); a log-spaced cost curve on both
 sides; anchored measurements at the headline impact levels, solved waiting for
 every solver pool so split routes are captured; and per-rung route metadata.
-Block identity comes from the quotes themselves — the majority block labels the
+Block identity comes from the sweep's own quotes — the majority block labels the
 snapshot and `mixed_block` flags a straddle. There is no RPC client and no
 database anywhere in this package.
+
+The two prices do different jobs. `spot` buys the token with the numeraire, so
+it is an ask, and it only sizes trades: it is what turns a $50,000 rung into an
+amount of ETH to sell. Every impact is measured against `robust_mid`, which is
+two-sided by construction. Reported impact is therefore a cost against the
+midpoint, positive on both sides when the trade is worse than the mid, and a
+round trip costs about the sum of the two — measuring against `spot` instead
+would charge the sell side the entire bid/ask spread as if it were impact the
+trade had caused.
 
 Those dollar figures are the point of `--usd-reference`. The band, the spot
 probe and the grid bounds are all denominated in the numeraire, and only read as
@@ -318,14 +333,28 @@ thing; measuring BTC in BNB, a "2,500" band would mean 2,500 BNB — millions of
 dollars, far outside any sweep — and `robust_mid` would fall back every block.
 
 So `poe` prices the numeraire against a stablecoin on the chain Fynd reports and
-scales those defaults into numeraire units. The rate lands in each block summary
-as `numeraire_usd`, alongside the `mid_band_min`/`mid_band_max` it produced, so a
-reader can see what the band meant. Pass `--usd-reference <address>` to choose a
-different reference, `--usd-reference-decimals` to skip the Tycho lookup for it,
-or `--usd-reference none` to keep every size in raw numeraire units. When there
-is no route to the reference, `numeraire_usd` is null and sizes stay in numeraire
-units — recorded rather than guessed. Setting `--search-min`/`--search-max`
-yourself always wins over the scaling.
+scales those defaults into numeraire units. It quotes both ways — buying the
+numeraire with the reference and selling it back — and takes the midpoint, so
+the rate is not the ask that one direction would give. The round trip is also
+the check on itself: a pair that costs more than 2% to cross cannot price
+anything, and rather than scale by a number that is mostly its own impact, the
+run keeps raw numeraire units and says so.
+
+The rate lands in each block summary as `numeraire_usd`, alongside the
+`mid_band_min`/`mid_band_max` it produced, so a reader can see what the band
+meant. It is measured once per run, because a band that moved between blocks
+would make them incomparable, and `numeraire_usd_block` records the block it was
+measured at so its age on a later row is visible rather than assumed.
+`numeraire_usd_spread_bps` carries the round trip it was measured across, in
+basis points, which is what separates a rate taken on a deep pair from one that
+merely passed the 200 bp tolerance.
+
+Pass `--usd-reference <address>` to choose a different reference,
+`--usd-reference-decimals` to skip the Tycho lookup for it, or `--usd-reference
+none` to keep every size in raw numeraire units. When there is no route to the
+reference, `numeraire_usd` is null and sizes stay in numeraire units — recorded
+rather than guessed. Setting `--search-min`/`--search-max` yourself always wins
+over the scaling.
 
 Each anchored level also writes the transaction behind it to `*.anchors.jsonl`:
 the router address, the calldata, the fee breakdown, and a Tenderly simulation
@@ -366,7 +395,7 @@ level:
 | identity | `kind`, `chain_id`, `block_number`, `block_hash`, `block_timestamp`, `pair`, `side`, `mixed_block` |
 | the trade | `size_numeraire`, `amount_in`, `amount_out`, `amount_out_net_gas` |
 | the result | `execution_price`, `impact_pct`, `price_impact_bps`, `price_impact_bps_raw` |
-| gas | `gas_estimate`, `gas_price`, `gas_cost_token_out` |
+| gas | `gas_estimate`, `gas_price` (wei), `gas_cost_token_out`, `gas_cost_token_out_symbol` |
 | route | `route_hash`, `n_pools`, `protocols`, `solve_time_ms` |
 | token | `token_quality`, `token_tax` |
 
@@ -378,15 +407,25 @@ a dedicated bisection or was read off the sweep.
 `block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
 `robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
 `search_max`, `samples_per_side`, `mid_band_min`, `mid_band_max`,
-`numeraire_usd`, `slippage`, `duration_ms`.
+`numeraire_usd`, `numeraire_usd_block`, `numeraire_usd_spread_bps`, `slippage`,
+`duration_ms`.
 
 **`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
 `transaction_value`, `transaction_data`, `router_fee`, `client_fee`,
 `max_slippage`, `min_amount_received`, `tenderly_url`, `tenderly_status`, keyed
 by the same block identity plus `side`, `target_impact_pct` and `size_numeraire`.
 
-Sizes are in whole numeraire units; amounts are base-unit strings as the chain
-reports them; `price_impact_bps` is basis points and `impact_pct` is percent.
+Sizes are in whole numeraire units, and amounts are base-unit strings as the
+chain reports them.
+
+`impact_pct` and `price_impact_bps` are one measurement in two units — price
+impact against `robust_mid`, in percent and in basis points, so
+`price_impact_bps` is `impact_pct` times 100, rounded to a tenth of a basis
+point. Both use the cost convention: positive means the trade priced worse than
+the mid, on either side. `price_impact_bps_raw` is Fynd's own figure, passed
+through untouched; it is signed by trade direction rather than by cost and is
+computed against whatever reference the solver used, so it is not a substitute
+for either of the other two.
 
 ## Report
 

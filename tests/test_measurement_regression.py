@@ -126,7 +126,8 @@ def test_level_routes_are_locked(snapshot: Snapshot) -> None:
 
 
 def test_bps_of_mid_is_zero(snapshot: Snapshot) -> None:
-    assert (
-        derive_price_impact_bps(snapshot.robust_mid, snapshot.robust_mid)
-        == FIXTURE["sanity_bps_of_mid_is_zero"]
-    )
+    for side in ("buy", "sell"):
+        assert (
+            derive_price_impact_bps(snapshot.robust_mid, snapshot.robust_mid, side)
+            == FIXTURE["sanity_bps_of_mid_is_zero"]
+        )

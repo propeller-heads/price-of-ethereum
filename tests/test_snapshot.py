@@ -15,7 +15,11 @@ import amm_sim
 from price_of_ethereum import FyndClient, SnapshotConfig, TokenMeta, collect_snapshot
 from price_of_ethereum.fynd.client import DUMMY_SENDER
 from price_of_ethereum.fynd.models import Transaction
-from price_of_ethereum.pricing import ROBUST_MID_MIN_DEPTH, robust_mid_probe_depths
+from price_of_ethereum.pricing import (
+    ROBUST_MID_MIN_DEPTH,
+    impact_pct,
+    robust_mid_probe_depths,
+)
 from price_of_ethereum.sizing import atomic
 from price_of_ethereum.snapshot import build_tenderly_url
 
@@ -117,6 +121,59 @@ def test_majority_block_excludes_minority_rungs() -> None:
     assert all(row["mixed_block"] is True for row in rows)
 
 
+def test_anchors_flag_a_mixed_block_without_relabelling_it() -> None:
+    # The sweep settles block identity because the robust mid is drawn from it,
+    # and every impact in the snapshot is measured against that mid. An anchor
+    # landing on a later block is still reported, and its level is not published.
+    anchor_blocks: list[int] = []
+
+    def advance_anchors(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        order = payload["orders"][0]
+        body = amm_sim.quote_response(order["token_in"], order["amount"])
+        if payload["options"]["min_responses"] == 0:
+            body["orders"][0]["block"]["number"] = amm_sim.BLOCK_NUMBER + 1
+            anchor_blocks.append(amm_sim.BLOCK_NUMBER + 1)
+        return httpx.Response(200, json=body)
+
+    config = make_config(impact_levels=(1.0,), anchor_targets=(1.0,))
+    with FyndClient(transport=httpx.MockTransport(advance_anchors)) as fynd:
+        snapshot = collect_snapshot(fynd, config)
+
+    assert anchor_blocks, "the anchors must have run for this to test anything"
+    assert snapshot.block_number == amm_sim.BLOCK_NUMBER
+    assert snapshot.mixed_block is True
+    assert [row for row in snapshot.to_rows() if row["kind"] == "anchor"] == []
+
+
+def test_every_published_impact_shares_one_reference() -> None:
+    config = make_config(impact_levels=(1.0,), anchor_targets=(1.0,))
+    with client_with(lambda order, body: None) as fynd:
+        snapshot = collect_snapshot(fynd, config)
+
+    for row in snapshot.to_rows():
+        expected_impact = impact_pct(row["execution_price"], snapshot.robust_mid, row["side"])
+        assert row["impact_pct"] == pytest.approx(expected_impact, abs=5e-7)
+        assert row["price_impact_bps"] == pytest.approx(row["impact_pct"] * 100.0, abs=0.05)
+
+
+def test_a_sell_costs_what_the_matching_buy_costs() -> None:
+    # The mid is two-sided, so a symmetric pool must charge both sides the same
+    # for the same notional. Measuring against the one-directional spot probe
+    # instead puts the whole bid/ask gap on the sell side.
+    with client_with(lambda order, body: None) as fynd:
+        snapshot = collect_snapshot(fynd, make_config(samples_per_side=8))
+
+    by_notional = {point.notional: point.impact_pct for point in snapshot.curve_sell}
+    # Only inside the mid band: past it the two sides genuinely part company,
+    # because constant product lets a buy push price up without bound while a
+    # sell is capped by the reserve it is draining.
+    shallow = [point for point in snapshot.curve_buy if point.notional <= snapshot.mid_band_max]
+    assert len(shallow) >= 3
+    for buy in shallow:
+        assert buy.impact_pct == pytest.approx(by_notional[buy.notional], abs=5e-6)
+
+
 def test_null_block_rungs_are_kept() -> None:
     def mutate(order: dict, body: dict) -> None:
         is_sell = order["token_in"].lower() == amm_sim.WETH_ADDRESS.lower()
@@ -203,6 +260,12 @@ def test_to_block_row_carries_every_summary_field() -> None:
         "mid_band_min": 2_500.0,
         "mid_band_max": 10_000.0,
         "numeraire_usd": None,
+        # The rate is measured once per run, so the block it came from travels
+        # with it and a reader can see how stale it is on a later block. Its
+        # round-trip cost travels too, in basis points, because a rate taken on
+        # a thin pair is worth less trust than the same number on a deep one.
+        "numeraire_usd_block": None,
+        "numeraire_usd_spread_bps": None,
         # The anchors' calldata is only meaningful against the bound it was
         # encoded for, so the summary records it.
         "slippage": "0.001",
