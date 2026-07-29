@@ -74,18 +74,11 @@ dev = [
     "ruff==0.15.22",
     "ty==0.0.61",
 ]
-# Regenerating the committed example artifacts (`examples/build_showcase.py`):
-# nbconvert and ipykernel execute the notebook, kaleido turns each figure into
-# the static PNG that GitHub's notebook viewer can actually display. None of it
-# is needed to install, use or test this package, so CI never syncs this group
-# and nothing under `src/` may import from it. kaleido drives a headless Chrome
-# it does not bundle: it uses an installed one, or `plotly_get_chrome` fetches
-# a private copy.
-docs = [
-    "ipykernel>=7.3.0",
-    "kaleido>=1.3.0",
-    "nbconvert>=7.17.1",
-]
+# Rebuilding the committed example artifacts needs nbconvert, ipykernel and
+# kaleido, which are deliberately not a dependency group: nothing here installs,
+# uses or tests this package with them, and declaring them would put a compiled
+# JSON extension and a C parser in the lockfile of a measurement SDK. The one
+# command that wants them names them itself, in `examples/build_showcase.py`.
 
 [tool.ruff]
 line-length = 100

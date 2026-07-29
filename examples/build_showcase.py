@@ -10,10 +10,15 @@ already on disk. To record a fresh dataset first:
 
     poe collect --blocks 12 --out examples/data
 
-Then, with the docs group and a Chrome for kaleido and the screenshot step:
+Then, with a Chrome for kaleido and the screenshot step:
 
-    uv sync --group docs
-    uv run python examples/build_showcase.py
+    uv run --with nbconvert --with ipykernel --with kaleido \
+        python examples/build_showcase.py
+
+Those three are named here rather than declared as a dependency group. They are
+needed only to rebuild these artifacts, and pinning them would carry a compiled
+JSON extension and a C parser in the lockfile of a package that never imports
+either.
 
 Regenerating `report.html` costs ~1.7 MB of git history every time, because
 Plotly's bundle is inlined in it. Do that when the report itself changes; the

@@ -75,20 +75,22 @@ the stored outputs inside `examples/quickstart.ipynb` are generated, and one
 command rebuilds all of them from the dataset in `examples/data`:
 
 ```bash
-uv sync --group docs
-uv run python examples/build_showcase.py
+uv run --with nbconvert --with ipykernel --with kaleido \
+    python examples/build_showcase.py
 ```
 
 Only the notebook step needs a running Fynd — it executes every cell, so its
 stored outputs are a live measurement. Everything else reads the committed
 dataset, which is why the report stays reproducible by anyone.
 
-The `docs` group is not part of `--all-extras --dev` and CI never installs it,
-so nothing under `src/` may import from it. It carries `nbconvert` and
-`ipykernel` to execute the notebook and `kaleido` to rasterise figures; kaleido
-from v1 drives a headless Chrome that it does not bundle, using an installed one
-or a private copy fetched by `plotly_get_chrome`. The screenshot step needs that
-same Chrome and is skipped with a message when there is none.
+Those three tools are named on that command line rather than declared as a
+dependency group. `nbconvert` and `ipykernel` execute the notebook and `kaleido`
+rasterises the figures, none of which this package installs, imports or tests
+against; declaring them would put a compiled JSON extension and a C parser in
+the lockfile permanently to serve a command that runs when the artifacts change.
+kaleido from v1 drives a headless Chrome that it does not bundle, using an
+installed one or a private copy fetched by `plotly_get_chrome`. The screenshot
+step needs that same Chrome and is skipped with a message when there is none.
 
 Three things about it are deliberate. Every Plotly output in the notebook gets a
 PNG injected beside it, because GitHub's notebook viewer runs no JavaScript and
