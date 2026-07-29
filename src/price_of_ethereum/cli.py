@@ -6,8 +6,6 @@ Token metadata (decimals, symbol) normally comes from Tycho — a key from
 https://t.me/fynd_portal_bot) — but `--token-decimals`/`--token-symbol` and
 `--numeraire-decimals`/`--numeraire-symbol` let a self-hosted Tycho or no-Tycho
 user describe a token directly and skip that lookup for it.
-One read-side command renders what is already on disk (`report`) and connects to
-nothing; it needs the `viz` extra for Plotly.
 
 All measurement logic lives in the library; the CLI only builds a
 `SnapshotConfig` and drives it.
@@ -32,7 +30,6 @@ from price_of_ethereum.collect import (
     CollectionAbortedError,
     collect_blocks,
     output_paths,
-    paths_for,
 )
 from price_of_ethereum.fynd.client import (
     DEFAULT_SLIPPAGE,
@@ -43,7 +40,7 @@ from price_of_ethereum.fynd.client import (
 from price_of_ethereum.pricing import ROBUST_MID_MAX_DEPTH, ROBUST_MID_MIN_DEPTH
 from price_of_ethereum.sizing import ReferenceRate, SpotProbeError, reference_rate
 from price_of_ethereum.snapshot import SnapshotConfig, collect_snapshot
-from price_of_ethereum.storage import append_jsonl, load_jsonl, load_latest_block_rows
+from price_of_ethereum.storage import append_jsonl
 from price_of_ethereum.tokens import TokenMeta, resolve_tokens
 from price_of_ethereum.tycho.client import TychoClient, TychoError
 from price_of_ethereum.tycho.models import Chain
@@ -290,22 +287,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Number of distinct blocks to record (default: run until Ctrl-C).",
-    )
-
-    # The read-side command renders recorded data and connects to nothing, so it
-    # locates files by pair/chain instead of asking Fynd which chain it serves.
-    report_parser = subparsers.add_parser(
-        "report", help="Write a self-contained HTML report (needs the viz extra)."
-    )
-    report_parser.add_argument("--out", default="data", help="Directory holding the JSONL files.")
-    report_parser.add_argument(
-        "--pair", default="ETH/USDC", help="Pair label used in the filenames."
-    )
-    report_parser.add_argument(
-        "--chain-id", type=int, default=1, help="Chain id used in the filenames."
-    )
-    report_parser.add_argument(
-        "--output", default="report.html", help="Path of the HTML file to write."
     )
 
     init_worker_pools_parser = subparsers.add_parser(
@@ -600,18 +581,6 @@ def run_collect(
     return 0 if result.blocks_recorded > 0 else 1
 
 
-def read_side_paths(args: argparse.Namespace) -> tuple[Path, Path]:
-    rows_path, blocks_path, _anchors_path = paths_for(
-        args.out, pair=args.pair, chain_id=args.chain_id
-    )
-    if not rows_path.exists() and not blocks_path.exists():
-        raise SystemExit(
-            f"no recorded data for {args.pair} on chain {args.chain_id} under {args.out}; "
-            f"run `poe collect` first (expected {rows_path.name})."
-        )
-    return rows_path, blocks_path
-
-
 def run_init_worker_pools(args: argparse.Namespace) -> int:
     out_path = Path(args.out)
     if out_path.exists() and not args.overwrite:
@@ -623,33 +592,11 @@ def run_init_worker_pools(args: argparse.Namespace) -> int:
     return 0
 
 
-def run_report(args: argparse.Namespace) -> int:
-    import pandas as pd
-
-    from price_of_ethereum.dashboard import write_report
-
-    rows_path, blocks_path = read_side_paths(args)
-    rows = load_latest_block_rows(rows_path) if rows_path.exists() else pd.DataFrame()
-    blocks = load_jsonl(blocks_path) if blocks_path.exists() else pd.DataFrame()
-    written = write_report(args.output, rows, blocks, title=f"{args.pair} — measured depth")
-    print(f"wrote {written} ({written.stat().st_size / 1e6:.1f} MB, self-contained)")
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     args = build_parser().parse_args(argv)
     if args.command == "init-worker-pools":
         return run_init_worker_pools(args)
-    # The read-side command renders what is on disk; it never reaches for Fynd.
-    if args.command == "report":
-        try:
-            return run_report(args)
-        except ImportError as error:
-            raise SystemExit(
-                "the report needs the viz extra: "
-                "pip install 'price-of-ethereum[viz]' (or: uv sync --extra viz)"
-            ) from error
     # Resolved before connecting: this rejects a half-described token, and Fynd
     # cold-start hydration can take minutes, which is a long time to wait to be
     # told a flag is missing its pair.
