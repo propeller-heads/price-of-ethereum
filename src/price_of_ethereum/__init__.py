@@ -19,9 +19,11 @@ from price_of_ethereum.pricing import (
     robust_mid_from_sides,
 )
 from price_of_ethereum.sizing import (
+    ReferenceRate,
     SizedRung,
     SpotProbeError,
     numeraire_grid,
+    reference_rate,
     size_rungs,
     spot_price,
 )
@@ -48,6 +50,7 @@ __all__ = [
     "FyndClient",
     "FyndError",
     "Level",
+    "ReferenceRate",
     "SizedRung",
     "Snapshot",
     "SnapshotConfig",
@@ -67,6 +70,7 @@ __all__ = [
     "load_jsonl",
     "load_parquet",
     "numeraire_grid",
+    "reference_rate",
     "resolve_tokens",
     "robust_mid_from_sides",
     "size_rungs",
