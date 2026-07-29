@@ -64,10 +64,10 @@ def test_a_simulated_snapshot_is_healthy() -> None:
 def test_the_simulated_chain_advances_one_block_per_collect_cycle() -> None:
     # The simulator moves its block on the first request after a quiet gap, so a
     # sweep sees one block and the collector's idle probe is what advances it.
-    # `idle_wait_s` here only has to clear that gap.
+    # The poll interval here only has to clear that gap.
     config = simulated_config()
     with simulated_fynd.simulated_fynd() as fynd, tempfile.TemporaryDirectory() as out_dir:
-        result = collect_blocks(fynd, config, out_dir=out_dir, blocks=3, idle_wait_s=1.2)
+        result = collect_blocks(fynd, config, out_dir=out_dir, blocks=3, poll_interval_s=1.2)
         summaries = [
             json.loads(line) for line in result.blocks_path.read_text(encoding="utf-8").splitlines()
         ]
