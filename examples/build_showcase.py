@@ -1,16 +1,17 @@
 """Regenerate the example artifacts committed to this repository.
 
 Reads the recorded dataset in `examples/data` — a real Ethereum mainnet
-measurement — and writes `examples/report.html`, the images `README.md` links
-to, and a provenance note beside the dataset. It then executes
-`examples/quickstart.ipynb` and injects a static image into each figure.
+measurement — and writes the image `README.md` links to and a provenance note
+beside the dataset. It then executes `examples/quickstart.ipynb` and injects a
+static image into each figure, because GitHub's notebook viewer runs no
+JavaScript and a Plotly figure alone is a blank gap there.
 
 Only the notebook step needs a running Fynd; everything else reads what is
 already on disk. To record a fresh dataset first:
 
     poe collect --blocks 12 --out examples/data
 
-Then, with a Chrome for kaleido and the screenshot step:
+Then, with a Chrome for kaleido:
 
     uv run --with nbconvert --with ipykernel --with kaleido \
         python examples/build_showcase.py
@@ -19,33 +20,26 @@ Those three are named here rather than declared as a dependency group. They are
 needed only to rebuild these artifacts, and pinning them would carry a compiled
 JSON extension and a C parser in the lockfile of a package that never imports
 either.
-
-Regenerating `report.html` costs ~1.7 MB of git history every time, because
-Plotly's bundle is inlined in it. Do that when the report itself changes; the
-dataset is committed, so anyone can rebuild the file locally instead.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-import shutil
 import subprocess
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 
-from price_of_ethereum.dashboard import cost_curve_figure, write_report
+from price_of_ethereum.charts import cost_curve_figure
 from price_of_ethereum.storage import load_jsonl, load_latest_block_rows
 
 EXAMPLES = Path(__file__).parent
 DATA = EXAMPLES / "data"
 IMAGES = EXAMPLES / "images"
 NOTEBOOK = EXAMPLES / "quickstart.ipynb"
-REPORT = EXAMPLES / "report.html"
 DATASET_NOTE = DATA / "README.md"
 
 PLOTLY_MIME = "application/vnd.plotly.v1+json"
@@ -57,18 +51,11 @@ PLOTLY_MIME = "application/vnd.plotly.v1+json"
 # would cost the file the very thing they are here to give it.
 PNG_WIDTH, PNG_HEIGHT, PNG_SCALE = 1000, 450, 1.5
 
-CHROME_CANDIDATES = (
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "google-chrome",
-    "chromium",
-)
-
 
 def load_dataset() -> tuple[pd.DataFrame, pd.DataFrame]:
     """(latest block's rows, every block summary) from the committed dataset.
 
-    Same split `poe report` uses: the per-size charts show one block, the
+    The per-size charts show one block, the
     history charts show every recorded one.
     """
     summaries = sorted(DATA.glob("*.blocks.jsonl"))
@@ -128,54 +115,12 @@ The three files, and every field in them, are documented in the repository
 README under "What lands on disk". This directory is the only place a recorded
 dataset is committed; `.gitignore` keeps every other one out.
 
-`examples/report.html` is rendered from exactly these files, and rebuilding it
-needs neither Fynd nor Tycho. The committed copy differs only in carrying its
-block range in the title:
+`examples/quickstart.ipynb` reads these files and redraws every chart from them,
+so the notebook needs neither Fynd nor Tycho to reproduce what is committed here.
 
-```bash
-poe report --out examples/data --output examples/report.html
-```
-
-Regenerate this note, the report and the README images with
-`examples/build_showcase.py`.
+Regenerate this note and the README image with `examples/build_showcase.py`.
 """,
         encoding="utf-8",
-    )
-
-
-def find_chrome() -> str | None:
-    """First candidate that exists and is executable; `which` takes either an
-    absolute path or a bare name."""
-    for candidate in CHROME_CANDIDATES:
-        found = shutil.which(candidate)
-        if found:
-            return found
-    return None
-
-
-def screenshot_report(chrome: str, destination: Path) -> None:
-    """Top of the rendered report, as a browser actually draws it.
-
-    A committed `.html` does not render on GitHub — the blob view shows source
-    and raw.githubusercontent serves it as text/plain — so this image is the
-    only way a reader sees the page without downloading it.
-    """
-    subprocess.run(
-        [
-            chrome,
-            "--headless=new",
-            "--disable-gpu",
-            "--hide-scrollbars",
-            # Tall enough for the summary tiles and the first two panels, and
-            # cut at a panel boundary rather than through one.
-            "--window-size=1360,1245",
-            # Plotly draws after load; without a virtual clock the shot is blank.
-            "--virtual-time-budget=15000",
-            f"--screenshot={destination}",
-            REPORT.as_uri(),
-        ],
-        check=True,
-        capture_output=True,
     )
 
 
@@ -235,9 +180,6 @@ def main() -> int:
     write_dataset_note(blocks, rows)
     print(f"wrote {DATASET_NOTE}")
 
-    write_report(REPORT, rows, blocks, title=label)
-    print(f"wrote {REPORT} ({REPORT.stat().st_size / 1e6:.1f} MB)")
-
     latest = blocks.sort_values("block_number").iloc[-1]
     curve = cost_curve_figure(rows, numeraire_symbol=str(latest["numeraire_symbol"]))
     curve.update_layout(
@@ -245,13 +187,6 @@ def main() -> int:
     )
     curve.write_image(IMAGES / "cost-curve.png", width=1200, height=560, scale=2)
     print(f"wrote {IMAGES / 'cost-curve.png'}")
-
-    chrome = find_chrome()
-    if chrome is None:
-        print("no Chrome found; skipping the report screenshot", file=sys.stderr)
-    else:
-        screenshot_report(chrome, IMAGES / "report.png")
-        print(f"wrote {IMAGES / 'report.png'} (via {chrome})")
 
     execute_notebook()
     print(f"executed {NOTEBOOK}, injected {inject_static_images(NOTEBOOK)} static images")

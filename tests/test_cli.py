@@ -80,12 +80,12 @@ def test_parser_defaults() -> None:
     assert args.out == "data"
 
 
-def test_report_is_the_only_read_side_command() -> None:
-    args = build_parser().parse_args(["report", "--out", "data"])
-    assert args.output == "report.html"
-    assert args.chain_id == 1
+@pytest.mark.parametrize("command", ["report", "serve"])
+def test_commands_that_render_are_not_offered(command: str) -> None:
+    # Charts are drawn in the notebook, from the recorded JSONL. The CLI
+    # measures and writes; it renders nothing.
     with pytest.raises(SystemExit):
-        build_parser().parse_args(["serve"])
+        build_parser().parse_args([command, "--out", "data"])
 
 
 def test_make_tycho_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:

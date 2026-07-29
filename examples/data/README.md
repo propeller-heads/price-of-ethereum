@@ -20,13 +20,7 @@ The three files, and every field in them, are documented in the repository
 README under "What lands on disk". This directory is the only place a recorded
 dataset is committed; `.gitignore` keeps every other one out.
 
-`examples/report.html` is rendered from exactly these files, and rebuilding it
-needs neither Fynd nor Tycho. The committed copy differs only in carrying its
-block range in the title:
+`examples/quickstart.ipynb` reads these files and redraws every chart from them,
+so the notebook needs neither Fynd nor Tycho to reproduce what is committed here.
 
-```bash
-poe report --out examples/data --output examples/report.html
-```
-
-Regenerate this note, the report and the README images with
-`examples/build_showcase.py`.
+Regenerate this note and the README image with `examples/build_showcase.py`.

@@ -34,23 +34,12 @@ its charts already drawn: every figure carries a static image beside the
 interactive one, because GitHub's notebook viewer runs no JavaScript and a
 Plotly figure alone would be a blank gap there.
 
-[![The top of the HTML report: block summary tiles, the cost curve and the book map](./examples/images/report.png)](./examples/report.html)
-
-[`examples/report.html`](./examples/report.html) is what `poe report` writes —
-one self-contained file with Plotly inlined and nothing loaded off-machine.
-GitHub serves a committed `.html` as source rather than rendering it, so seeing
-the real thing means downloading that file and opening it; the image above is a
-screenshot of exactly that.
-
-**Both are real measurements, and both record which one.** The report and the
-chart above come from [`examples/data`](./examples/data) — ETH/USDC on Ethereum
-mainnet, 12 blocks, 25,638,023–25,638,034, recorded 2026-07-29 — a dataset
-committed beside them, with a note stating exactly what was measured and when.
-The report is rendered from those three files and nothing else, so
-`poe report --out examples/data` rebuilds it with no Fynd, no key and no network;
-the committed copy differs only in carrying its block range in the title. The
-notebook's stored outputs are a separate live run against the same mainnet Fynd,
-a few blocks later, and it prints its own range in section 6.
+**It is a real measurement, and it records which one.** The chart above and the
+notebook's stored outputs come from [`examples/data`](./examples/data) — ETH/USDC
+on Ethereum mainnet, 12 blocks, 25,638,023–25,638,034, recorded 2026-07-29 — a
+dataset committed beside them, with a note stating exactly what was measured and
+when. The notebook redraws every chart from those three files, so reproducing
+what is committed here needs no Fynd, no key and no network.
 
 Read all of it as a specimen rather than as a price. Liquidity moves every
 block, and this is a few minutes of one afternoon.
@@ -82,7 +71,7 @@ Measuring needs nothing heavy — the base install is `httpx` and `pydantic`, an
 | Extra | Adds | Needed for |
 | --- | --- | --- |
 | `data` | pandas | reading recorded JSONL back as a DataFrame |
-| `viz` | pandas, Plotly | `poe report` and the notebook |
+| `viz` | pandas, Plotly | the notebook's charts |
 | `parquet` | pandas, pyarrow | `to_parquet` / `load_parquet` |
 
 `parquet` is separate because pyarrow is a ~123 MB install, which is a lot to
@@ -263,7 +252,6 @@ export TYCHO_API_KEY=<your-key>
 
 poe snapshot                       # measure one block, print its summary
 poe collect --blocks 50 --out data # record 50 blocks into JSONL
-poe report --out data --output report.html   # self-contained HTML report
 ```
 
 A snapshot is roughly 220 quotes against your Fynd: 100 sizes per side, plus the
@@ -427,40 +415,13 @@ through untouched; it is signed by trade direction rather than by cost and is
 computed against whatever reference the solver used, so it is not a substitute
 for either of the other two.
 
-## Report
-
-`poe report` renders the recorded JSONL into one HTML file: cost curve, book map
-with the robust-mid band shaded, round-trip spread as a percent of the mid, the
-anchored levels as a table, and mid/depth/latency across every recorded block.
-Axes carry the real token symbols, and prices read numeraire per token
-throughout. Plotly ships inside the `viz` extra and its bundle is inlined, so
-the file is ~5 MB, opens straight from disk, and requests nothing off-machine.
-
-The report is a snapshot of the file at the moment you ran it. To watch a
-running collection, re-run `poe report` and reopen the file — or, if you want it
-over HTTP, serve the directory:
-
-```bash
-poe collect --out data &
-poe report --out data --output report.html
-python -m http.server --directory .    # optional; the file works fine without it
-```
-
-The JSONL the collector writes is the full raw dataset, so nothing in the report
-is the only copy of anything.
-
-[`examples/report.html`](./examples/report.html) is a committed one, rendered
-from the dataset in [`examples/data`](./examples/data). Download it to open it —
-GitHub shows a committed `.html` as source, and `raw.githubusercontent.com`
-serves it as `text/plain`, so neither renders the page.
-
 ## Notebook
 
 [`examples/quickstart.ipynb`](./examples/quickstart.ipynb) walks the whole path:
 connect, one snapshot, what a measurement contains, the charts, where the route
-changes and impact stops being monotonic, and recording a history. It calls the
-same figure builders `poe report` does, so it draws exactly what the report
-draws — use the notebook to explore interactively, the report to share a result.
+changes and impact stops being monotonic, and recording a history. The figures
+come from `price_of_ethereum.charts`, so the same builders draw them whether you
+run the notebook or call them from your own code.
 
 ```bash
 pip install jupyterlab            # alongside the viz extra above

@@ -70,9 +70,9 @@ depends on moved.
 
 ## The committed example artifacts
 
-`examples/report.html`, `examples/images/*.png`, `examples/data/README.md` and
-the stored outputs inside `examples/quickstart.ipynb` are generated, and one
-command rebuilds all of them from the dataset in `examples/data`:
+`examples/images/*.png`, `examples/data/README.md` and the stored outputs inside
+`examples/quickstart.ipynb` are generated, and one command rebuilds all of them
+from the dataset in `examples/data`:
 
 ```bash
 uv run --with nbconvert --with ipykernel --with kaleido \
@@ -103,10 +103,8 @@ width into one history. `tests/test_examples.py` fails on all three.
 
 Recollecting is `poe collect --blocks 12 --out examples/data` into an emptied
 directory. The dataset is ~2.0 MB, the one place `.gitignore` lets a measured
-dataset be committed, and it exists so the report can be rebuilt without a
-server. Rebuilding `report.html` itself costs ~1.7 MB of git history each time,
-since Plotly's bundle is inlined in it — do that when the report changes, not to
-refresh the sample.
+dataset be committed, and it exists so the notebook's charts can be redrawn
+without a server.
 
 ## Commit messages
 

@@ -23,9 +23,8 @@ on a package index, so there is no upgrade path to describe.
 - `--sender` sets the address quotes are encoded for. It defaults to a
   placeholder that holds nothing, and a link built for it is recorded as
   `placeholder_sender` rather than `ready`, since it cannot simulate the trade.
-- `poe` CLI: `snapshot`, `collect`, `report` and `init-worker-pools`.
-- `poe report` writes a self-contained HTML file with `plotly.io.to_html`. It
-  contains no JavaScript written in this repository.
+- `poe` CLI: `snapshot`, `collect` and `init-worker-pools`.
+- `price_of_ethereum.charts` builds the Plotly figures the notebook draws.
 - JSONL storage, with Parquet conversion behind the `parquet` extra.
 - `--token-decimals`, `--token-symbol`, `--numeraire-decimals` and
   `--numeraire-symbol` describe tokens without calling Tycho. Supply all four
