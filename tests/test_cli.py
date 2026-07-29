@@ -502,7 +502,7 @@ def test_build_config_prices_the_numeraire_against_the_reference_not_the_reverse
     assert config.mid_band_min == pytest.approx(2_500.0 / 600.0, rel=1e-6)
     assert config.mid_band_max == pytest.approx(10_000.0 / 600.0, rel=1e-6)
     assert config.numeraire_usd_block == 44_000_000
-    assert config.numeraire_usd_spread == pytest.approx(0.0, abs=1e-9)
+    assert config.numeraire_usd_spread_bps == pytest.approx(0.0, abs=1e-6)
 
 
 @pytest.mark.parametrize(

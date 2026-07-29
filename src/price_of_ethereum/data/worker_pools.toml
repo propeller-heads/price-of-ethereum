@@ -71,7 +71,7 @@ connector_tokens = [
 # Ethereum mainnet, ETH/USDC, samples_per_side=100, 4 blocks each:
 #
 #   benchmark values   29-32s per snapshot, mixed_block 4/4, max 2 pools/route
-#   values below       2.5-3.0s,            mixed_block 0/4, max 5 pools/route
+#   values below       3.6-4.2s,            mixed_block 0/12, max 5 pools/route
 #
 # The 60s budget makes every snapshot straddle a block boundary, so rungs get
 # dropped and the single-block guarantee is lost — slower *and* worse routes. The
@@ -80,7 +80,7 @@ connector_tokens = [
 #
 # TUNING FOR ANOTHER CHAIN
 #
-# Those numbers were measured against Ethereum's ~12s blocks, where a 2.5-3.0s
+# Those numbers were measured against Ethereum's ~12s blocks, where a 3.6-4.2s
 # snapshot has a comfortable margin. Every other chain Fynd routes on has shorter
 # blocks, and its own liquidity graph, so neither the block interval nor the
 # snapshot duration carries over. Measure both rather than assuming: the block

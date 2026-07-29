@@ -109,21 +109,43 @@ def test_book_map_marks_the_mid_and_the_band(measured) -> None:
     assert bands and bands[0].x0 == pytest.approx(ROBUST_MID_MIN_DEPTH)
 
 
+def test_book_map_shades_the_band_the_run_actually_used() -> None:
+    # The band is in numeraire units. A pair whose numeraire is worth $600 votes
+    # its mid from ~4-17 of them, and shading the dollar-shaped default instead
+    # would claim the mid came from a notional 600x larger than it did.
+    rows = pd.DataFrame(
+        {
+            "kind": ["curve", "curve"],
+            "side": ["buy", "sell"],
+            "size_numeraire": [4.5, 4.5],
+            "execution_price": [158.0, 157.0],
+            "impact_pct": [0.1, 0.1],
+        }
+    )
+    figure = book_map_figure(rows, 157.5, band_min=4.167, band_max=16.667)
+    bands = [shape for shape in figure.layout.shapes if shape.type == "rect"]
+    assert bands
+    assert bands[0].x0 == pytest.approx(4.167)
+    assert bands[0].x1 == pytest.approx(16.667)
+
+
 def test_spread_curve_empty_without_a_mid(measured) -> None:
     rows, _ = measured
     assert spread_curve_figure(rows, None).data == ()
 
 
-def test_level_table_reports_impact_in_percent(measured) -> None:
+def test_level_table_reports_impact_once_in_percent(measured) -> None:
     rows, _ = measured
     table = level_table_figure(rows).data[0]
     headers = list(table.header.values)
+    # bps and percent are the same measurement, so the table carries one of them.
     assert "price impact bps" not in headers
-    assert headers.index("price impact pct") == headers.index("impact pct") + 1
+    assert "price impact pct" not in headers
     anchors = rows[rows["kind"] == "anchor"]
-    stored_bps = anchors.sort_values(["target_impact_pct", "side"]).iloc[0]["price_impact_bps"]
-    shown = table.cells.values[headers.index("price impact pct")][0]
-    assert float(shown) == pytest.approx(stored_bps / 100.0, rel=1e-5)
+    first = anchors.sort_values(["target_impact_pct", "side"]).iloc[0]
+    shown = table.cells.values[headers.index("impact pct")][0]
+    assert float(shown) == pytest.approx(first["impact_pct"], rel=1e-5)
+    assert first["price_impact_bps"] == pytest.approx(first["impact_pct"] * 100.0, abs=0.05)
 
 
 def test_level_table_lists_one_row_per_side(measured) -> None:

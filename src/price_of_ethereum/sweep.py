@@ -26,7 +26,13 @@ from pydantic import ValidationError
 
 from price_of_ethereum.fynd.client import DEFAULT_SLIPPAGE, FyndClient, FyndError
 from price_of_ethereum.fynd.models import QUOTE_STATUS_SUCCESS, OrderQuote
-from price_of_ethereum.pricing import Side, execution_price, impact_pct, is_finite_number
+from price_of_ethereum.pricing import (
+    Side,
+    execution_price,
+    impact_pct,
+    is_finite_number,
+    significant,
+)
 from price_of_ethereum.sizing import SizedRung, sized_amount
 from price_of_ethereum.tokens import TokenMeta
 
@@ -37,9 +43,27 @@ Bound = Literal["min", "max"]
 
 
 @dataclass(frozen=True)
+class MeasuredRung:
+    """One quoted sweep rung, priced but not yet measured against a reference.
+
+    The sweep produces the robust mid that every impact is measured against, so
+    a rung exists before its own impact can be computed. `reference_sweep` turns
+    a list of these into `SweepPoint`s once the mid is known.
+    """
+
+    notional: float
+    price: float
+    quote: OrderQuote
+    solve_time_ms: int
+
+
+@dataclass(frozen=True)
 class SweepPoint:
-    """One measured sweep rung. `notional` is rounded to cents, prices and
-    impact to 6 decimals — the granularity the dataset publishes."""
+    """One measured sweep rung with its impact against the robust mid.
+
+    `notional` and `price` carry the significant figures the dataset publishes,
+    impact 6 decimals.
+    """
 
     notional: float
     price: float
@@ -147,11 +171,11 @@ def sweep_side(
     numeraire: TokenMeta,
     max_workers: int = 6,
     timeout_ms: int = 8000,
-) -> list[SweepPoint]:
+) -> list[MeasuredRung]:
     """Fan out one quote per rung (`min_responses=1`), sorted ascending by
     notional. Failed rungs are skipped."""
 
-    def measure(rung: SizedRung) -> SweepPoint | None:
+    def measure(rung: SizedRung) -> MeasuredRung | None:
         measured = quote_at_notional(
             fynd,
             side=side,
@@ -167,23 +191,44 @@ def sweep_side(
         if measured is None:
             return None
         order_quote, price, solve_time_ms = measured
-        return SweepPoint(
-            notional=round(rung.notional, 2),
-            price=round(price, 6),
-            impact_pct=round(impact_pct(price, spot, side), 6),
+        return MeasuredRung(
+            notional=significant(rung.notional),
+            price=significant(price),
             quote=order_quote,
             solve_time_ms=solve_time_ms,
         )
 
-    points: list[SweepPoint] = []
+    measured_rungs: list[MeasuredRung] = []
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [pool.submit(measure, rung) for rung in rungs]
         for future in as_completed(futures):
-            point = future.result()
-            if point is not None:
-                points.append(point)
-    points.sort(key=lambda point: point.notional)
-    return points
+            rung_measurement = future.result()
+            if rung_measurement is not None:
+                measured_rungs.append(rung_measurement)
+    measured_rungs.sort(key=lambda rung: rung.notional)
+    return measured_rungs
+
+
+def reference_sweep(
+    measured_rungs: list[MeasuredRung], *, side: Side, reference: float
+) -> list[SweepPoint]:
+    """Measure a quoted sweep against `reference`, the snapshot's robust mid.
+
+    Impact is attached here rather than while quoting because the reference is
+    itself derived from these rungs. Doing it in one pass, for one reference,
+    is what keeps a rung's published impact, the target a level claims to have
+    reached, and the level's basis points all denominated in the same number.
+    """
+    return [
+        SweepPoint(
+            notional=rung.notional,
+            price=rung.price,
+            impact_pct=round(impact_pct(rung.price, reference, side), 6),
+            quote=rung.quote,
+            solve_time_ms=rung.solve_time_ms,
+        )
+        for rung in measured_rungs
+    ]
 
 
 def anchor_target_from_sweep(
@@ -193,6 +238,7 @@ def anchor_target_from_sweep(
     target_pct: float,
     sweep: list[SweepPoint],
     spot: float,
+    impact_reference: float,
     token: TokenMeta,
     numeraire: TokenMeta,
     timeout_ms: int = 8000,
@@ -201,6 +247,13 @@ def anchor_target_from_sweep(
     slippage: str = DEFAULT_SLIPPAGE,
 ) -> AnchorResult | None:
     """Tight bisection seeded by the sweep's bracket around `target_pct`.
+
+    `spot` and `impact_reference` are separate jobs and separate numbers. `spot`
+    is the one-directional probe price each trial size is sized from, so a sell
+    notional buys the same amount of token the matching buy notional spends.
+    `impact_reference` is the robust mid the resulting impact is measured
+    against, and must match what the swept `sweep` was referenced to, or the
+    bisection converges on a target the level will not be published at.
 
     Each iteration is a slow split quote (`min_responses=0`) so the returned
     measurement carries path_frank_wolfe routes, and asks for the calldata that
@@ -260,7 +313,7 @@ def anchor_target_from_sweep(
         if measured is None:
             break
         order_quote, price, solve_time_ms = measured
-        actual_impact = impact_pct(price, spot, side)
+        actual_impact = impact_pct(price, impact_reference, side)
         diff = abs(actual_impact - target_pct)
         if diff < best_diff:
             best = AnchorResult(
@@ -349,8 +402,8 @@ def level_from_anchor(
         actual_impact_pct=round(anchor.impact_pct, 6),
         target_reached=within,
         bound=bound,
-        notional=round(anchor.notional, 2),
-        price=round(anchor.price, 6),
+        notional=significant(anchor.notional),
+        price=significant(anchor.price),
         quote=anchor.quote,
         solve_time_ms=anchor.solve_time_ms,
         derived_from="anchored_bisection",

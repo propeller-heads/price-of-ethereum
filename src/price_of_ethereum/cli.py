@@ -239,15 +239,16 @@ def build_parser() -> argparse.ArgumentParser:
             "--wait-ready-s",
             type=float,
             default=300.0,
-            help="How long to wait for Fynd to finish cold-start hydration.",
+            help="Seconds to wait for Fynd to finish cold-start hydration.",
         )
         sub.add_argument(
             "--poll-interval-s",
             type=_validated_poll_interval,
             default=None,
             help=(
-                "How often to ask Fynd whether the block moved. Defaults to a per-chain "
-                "value; each poll is a route solve, so the useful floor is your pair's "
+                "Seconds between asking Fynd whether the block moved. Defaults to a "
+                "per-chain value; each poll is a route solve, so the useful floor is "
+                "your pair's "
                 "solve time, which the rows record as solve_time_ms."
             ),
         )
@@ -528,7 +529,9 @@ def build_config(
         mid_band_max=ROBUST_MID_MAX_DEPTH * scale,
         numeraire_usd=None if measured_rate is None else measured_rate.rate,
         numeraire_usd_block=None if measured_rate is None else measured_rate.block,
-        numeraire_usd_spread=None if measured_rate is None else measured_rate.spread,
+        numeraire_usd_spread_bps=(
+            None if measured_rate is None else measured_rate.spread * 10_000.0
+        ),
         slippage=slippage,
         max_workers=args.max_workers,
     )

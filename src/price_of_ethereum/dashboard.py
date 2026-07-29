@@ -58,7 +58,6 @@ LEVEL_TABLE_COLUMNS = (
     "target_impact_pct",
     "size_numeraire",
     "impact_pct",
-    "price_impact_bps",
     "execution_price",
     "bound",
     "target_reached",
@@ -67,9 +66,6 @@ LEVEL_TABLE_COLUMNS = (
     "protocols",
     "route_hash",
 )
-
-# Stored column -> display column, where the table shows a different unit.
-LEVEL_COLUMN_LABELS = {"price_impact_bps": "price_impact_pct"}
 
 # Block-summary scalars worth showing above the charts, in reading order.
 SUMMARY_FIELDS = (
@@ -212,8 +208,15 @@ def book_map_figure(
     *,
     token_symbol: str = "token",
     numeraire_symbol: str = "numeraire",
+    band_min: float = ROBUST_MID_MIN_DEPTH,
+    band_max: float = ROBUST_MID_MAX_DEPTH,
 ) -> go.Figure:
-    """Effective execution price per side, with the robust-mid band shaded."""
+    """Effective execution price per side, with the robust-mid band shaded.
+
+    The band is in numeraire units, which are dollars only when the numeraire is
+    a dollar. The defaults suit that case; a run against another numeraire
+    records the band it actually used and passes it in.
+    """
     figure = go.Figure()
     for side, frame in _side_frames(rows, "curve").items():
         figure.add_trace(
@@ -235,8 +238,8 @@ def book_map_figure(
     )
     # The band the robust mid is voted from, so it is visible which rungs count.
     figure.add_vrect(
-        x0=ROBUST_MID_MIN_DEPTH,
-        x1=ROBUST_MID_MAX_DEPTH,
+        x0=band_min,
+        x1=band_max,
         fillcolor=NEUTRAL_COLOR,
         opacity=0.12,
         line_width=0,
@@ -389,23 +392,20 @@ def _cell_text(value: Any) -> str:
 def level_table_figure(rows: pd.DataFrame) -> go.Figure:
     """The anchored measurements, as a Plotly table.
 
-    Rows store price impact in bps; the table shows percent so it reads in the
-    same unit as every chart.
+    Impact appears once, as `impact_pct`, in the same unit and on the same
+    convention as every chart. The stored `price_impact_bps` is that same
+    measurement in a hundredth of the unit, so a column for it would repeat a
+    column already here.
     """
     anchors = rows[rows["kind"] == "anchor"] if "kind" in rows.columns else rows.iloc[:0]
     columns = [column for column in LEVEL_TABLE_COLUMNS if column in anchors.columns]
     sort_columns = ["target_impact_pct", "side"] if "target_impact_pct" in columns else columns[:1]
     ordered = anchors.sort_values(sort_columns) if sort_columns else anchors
-    cells = []
-    for column in columns:
-        values = ordered[column] / 100.0 if column == "price_impact_bps" else ordered[column]
-        cells.append([_cell_text(value) for value in values])
+    cells = [[_cell_text(value) for value in ordered[column]] for column in columns]
     figure = go.Figure(
         go.Table(
             header={
-                "values": [
-                    LEVEL_COLUMN_LABELS.get(column, column).replace("_", " ") for column in columns
-                ],
+                "values": [column.replace("_", " ") for column in columns],
                 "align": "left",
                 "fill": {"color": "#eef0f3"},
             },
@@ -439,6 +439,17 @@ def _robust_mid(latest: pd.Series | None) -> float | None:
     if latest is None or "robust_mid" not in latest or pd.isna(latest["robust_mid"]):
         return None
     return float(latest["robust_mid"])
+
+
+def _band_edge(latest: pd.Series | None, field: str, fallback: float) -> float:
+    """The band the mid was actually voted from, in numeraire units.
+
+    Datasets recorded before the summary carried the band fall back to the
+    dollar-shaped defaults, which is what those runs used.
+    """
+    if latest is None or field not in latest or pd.isna(latest[field]):
+        return fallback
+    return float(latest[field])
 
 
 def _summary_html(latest: pd.Series | None) -> str:
@@ -482,7 +493,12 @@ def write_report(
     figures = (
         cost_curve_figure(rows, numeraire_symbol=numeraire_symbol),
         book_map_figure(
-            rows, robust_mid, token_symbol=token_symbol, numeraire_symbol=numeraire_symbol
+            rows,
+            robust_mid,
+            token_symbol=token_symbol,
+            numeraire_symbol=numeraire_symbol,
+            band_min=_band_edge(latest, "mid_band_min", ROBUST_MID_MIN_DEPTH),
+            band_max=_band_edge(latest, "mid_band_max", ROBUST_MID_MAX_DEPTH),
         ),
         spread_curve_figure(rows, robust_mid, numeraire_symbol=numeraire_symbol),
         level_table_figure(rows),

@@ -10,6 +10,7 @@ import httpx
 import amm_sim
 from price_of_ethereum import FyndClient, TokenMeta
 from price_of_ethereum.fynd.models import OrderQuote
+from price_of_ethereum.pricing import significant
 from price_of_ethereum.sizing import numeraire_grid, size_rungs
 from price_of_ethereum.sweep import (
     AnchorResult,
@@ -17,13 +18,19 @@ from price_of_ethereum.sweep import (
     anchor_target_from_sweep,
     derive_level_from_sweep,
     level_from_anchor,
+    reference_sweep,
     sweep_side,
 )
 
 WETH = TokenMeta(address=amm_sim.WETH_ADDRESS, symbol="WETH", decimals=18, quality=100, tax=0)
 USDC = TokenMeta(address=amm_sim.USDC_ADDRESS, symbol="USDC", decimals=6, quality=100, tax=0)
 
+# The price trades are sized from, and the two-sided price impact is measured
+# against. A snapshot measures the second one; the pool these tests quote is
+# symmetric around 2500, so here the two coincide and the arithmetic stays
+# readable.
 SPOT = 2500.0
+REFERENCE = 2500.0
 
 
 def recording_client(
@@ -49,7 +56,7 @@ def make_point(notional: float, impact: float) -> SweepPoint:
     quote = OrderQuote.model_validate(amm_sim.order_quote(amm_sim.USDC_ADDRESS, str(10**9)))
     return SweepPoint(
         notional=notional,
-        price=SPOT * (1 + impact / 100.0),
+        price=REFERENCE * (1 + impact / 100.0),
         impact_pct=impact,
         quote=quote,
         solve_time_ms=amm_sim.SOLVE_TIME_MS,
@@ -65,7 +72,7 @@ class TestSweepSide:
             fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
         )
         assert [point.notional for point in points] == sorted(
-            round(rung.notional, 2) for rung in rungs if rung is not rungs[2]
+            significant(rung.notional) for rung in rungs if rung is not rungs[2]
         )
         assert all(payload["options"]["min_responses"] == 1 for payload in request_log)
 
@@ -151,7 +158,14 @@ class TestAnchorTargetFromSweep:
         sweep = [make_point(100.0, 0.01), make_point(1000.0, 0.05)]
         fynd, request_log = recording_client()
         anchor = anchor_target_from_sweep(
-            fynd, side="buy", target_pct=5.0, sweep=sweep, spot=SPOT, token=WETH, numeraire=USDC
+            fynd,
+            side="buy",
+            target_pct=5.0,
+            sweep=sweep,
+            spot=SPOT,
+            impact_reference=REFERENCE,
+            token=WETH,
+            numeraire=USDC,
         )
         assert anchor is None
         assert request_log == []
@@ -160,12 +174,23 @@ class TestAnchorTargetFromSweep:
         grid = numeraire_grid(50.0, 50_000_000.0, 15)
         rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
         fynd, request_log = recording_client()
-        sweep = sweep_side(
-            fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+        sweep = reference_sweep(
+            sweep_side(
+                fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+            ),
+            side="buy",
+            reference=REFERENCE,
         )
         request_log.clear()
         anchor = anchor_target_from_sweep(
-            fynd, side="buy", target_pct=5.0, sweep=sweep, spot=SPOT, token=WETH, numeraire=USDC
+            fynd,
+            side="buy",
+            target_pct=5.0,
+            sweep=sweep,
+            spot=SPOT,
+            impact_reference=REFERENCE,
+            token=WETH,
+            numeraire=USDC,
         )
         assert anchor is not None
         assert 0 < len(request_log) <= 3
@@ -238,7 +263,7 @@ class TestLevelFromAnchor:
         quote = OrderQuote.model_validate(amm_sim.order_quote(amm_sim.USDC_ADDRESS, str(10**9)))
         return AnchorResult(
             notional=12345.6789,
-            price=SPOT * (1 + impact / 100.0),
+            price=REFERENCE * (1 + impact / 100.0),
             impact_pct=impact,
             quote=quote,
             solve_time_ms=amm_sim.SOLVE_TIME_MS,
@@ -248,7 +273,7 @@ class TestLevelFromAnchor:
         level = level_from_anchor(self.anchor(5.1), side="buy", target_pct=5.0, tolerance=0.05)
         assert level.bound is None
         assert level.target_reached is True
-        assert level.notional == 12345.68
+        assert level.notional == 12345.6789
         assert level.derived_from == "anchored_bisection"
 
     def test_undershoot_is_max_bound(self) -> None:
@@ -285,13 +310,24 @@ def test_anchor_survives_a_size_fynd_will_not_encode() -> None:
     grid = numeraire_grid(50.0, 50_000_000.0, 15)
     rungs = size_rungs(grid, spot=SPOT, token_decimals=18, numeraire_decimals=6)
     fynd, _ = recording_client()
-    sweep = sweep_side(
-        fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+    sweep = reference_sweep(
+        sweep_side(
+            fynd, side="buy", rungs=rungs, spot=SPOT, token=WETH, numeraire=USDC, max_workers=2
+        ),
+        side="buy",
+        reference=REFERENCE,
     )
 
     refusing, request_log = encoding_refusing_client()
     anchor = anchor_target_from_sweep(
-        refusing, side="buy", target_pct=5.0, sweep=sweep, spot=SPOT, token=WETH, numeraire=USDC
+        refusing,
+        side="buy",
+        target_pct=5.0,
+        sweep=sweep,
+        spot=SPOT,
+        impact_reference=REFERENCE,
+        token=WETH,
+        numeraire=USDC,
     )
 
     assert anchor is not None
