@@ -23,6 +23,36 @@ price, price impact, the pools routed through, and gas. The result is the shape
 of the market — a cost curve and a two-sided book — rather than a point estimate,
 and it arrives as a tidy DataFrame you can check yourself.
 
+## What it looks like
+
+[![Cost curve: measured price impact against trade size, both sides, with the anchored levels marked](./examples/images/cost-curve.png)](./examples/quickstart.ipynb)
+
+[`examples/quickstart.ipynb`](./examples/quickstart.ipynb) reads on GitHub with
+its charts already drawn: every figure carries a static image beside the
+interactive one, because GitHub's notebook viewer runs no JavaScript and a
+Plotly figure alone would be a blank gap there.
+
+[![The top of the HTML report: block summary tiles, the cost curve and the book map](./examples/images/report.png)](./examples/report.html)
+
+[`examples/report.html`](./examples/report.html) is what `poe report` writes —
+one self-contained file with Plotly inlined and nothing loaded off-machine.
+GitHub serves a committed `.html` as source rather than rendering it, so seeing
+the real thing means downloading that file and opening it; the image above is a
+screenshot of exactly that.
+
+**Both are real measurements, and both record which one.** The report and the
+chart above come from [`examples/data`](./examples/data) — ETH/USDC on Ethereum
+mainnet, 12 blocks, 25,632,157–25,632,168, recorded 2026-07-28 — a dataset
+committed beside them, with a note stating exactly what was measured and when.
+The report is rendered from those three files and nothing else, so
+`poe report --out examples/data` rebuilds it with no Fynd, no key and no network;
+the committed copy differs only in carrying its block range in the title. The
+notebook's stored outputs are a separate live run against the same mainnet Fynd,
+a few blocks later, and it prints its own range in section 6.
+
+Read all of it as a specimen rather than as a price. Liquidity moves every
+block, and this is a few minutes of one afternoon.
+
 ## Install
 
 This package is not distributed on a package index; install it from the
@@ -380,18 +410,35 @@ python -m http.server --directory .    # optional; the file works fine without i
 The JSONL the collector writes is the full raw dataset, so nothing in the report
 is the only copy of anything.
 
+[`examples/report.html`](./examples/report.html) is a committed one, rendered
+from the dataset in [`examples/data`](./examples/data). Download it to open it —
+GitHub shows a committed `.html` as source, and `raw.githubusercontent.com`
+serves it as `text/plain`, so neither renders the page.
+
 ## Notebook
 
 [`examples/quickstart.ipynb`](./examples/quickstart.ipynb) walks the whole path:
-connect, one snapshot, what a measurement contains, the charts, where impact
-stops being monotonic, and recording a history. It calls the same figure
-builders `poe report` does, so it draws exactly what the report draws — use the
-notebook to explore interactively, the report to share a result.
+connect, one snapshot, what a measurement contains, the charts, where the route
+changes and impact stops being monotonic, and recording a history. It calls the
+same figure builders `poe report` does, so it draws exactly what the report
+draws — use the notebook to explore interactively, the report to share a result.
 
 ```bash
 pip install jupyterlab            # alongside the viz extra above
 jupyter lab examples/quickstart.ipynb
 ```
+
+The outputs committed to it are a real ETH/USDC measurement; section 6 prints
+the chain and block range they came from, and running the notebook replaces them
+with yours.
+
+With no Fynd listening it runs anyway, on
+[`examples/simulated_fynd.py`](./examples/simulated_fynd.py) — a fabricated
+two-pool AMM that answers through `httpx.MockTransport`, so the sweep, the
+bisection and the collector all run unchanged with nothing installed beyond this
+package and nothing listening on any port. It announces itself in the output and
+names its pair `simETH/simUSDC` on chain 31337, so a fabricated run can never be
+mistaken for a measured one.
 
 ## Development
 

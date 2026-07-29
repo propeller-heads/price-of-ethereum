@@ -74,6 +74,11 @@ dev = [
     "ruff==0.15.22",
     "ty==0.0.61",
 ]
+# Rebuilding the committed example artifacts needs nbconvert, ipykernel and
+# kaleido, which are deliberately not a dependency group: nothing here installs,
+# uses or tests this package with them, and declaring them would put a compiled
+# JSON extension and a C parser in the lockfile of a measurement SDK. The one
+# command that wants them names them itself, in `examples/build_showcase.py`.
 
 [tool.ruff]
 line-length = 100
@@ -84,6 +89,11 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ty.environment]
 python-version = "3.11"
+# `examples/` is not a package and is never installed, but three things import
+# `simulated_fynd` from it: the notebook (Jupyter puts a notebook's own
+# directory on the path), `examples/build_showcase.py`, and
+# `tests/test_examples.py`. Without this ty reports each of them as unresolved.
+extra-paths = ["examples"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

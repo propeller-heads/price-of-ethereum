@@ -9,10 +9,15 @@ __pycache__/
 # uv / venv
 .venv/
 
-# Collected data (never commit measured datasets)
+# Collected data: a measured dataset is yours, not the repository's.
 *.jsonl
 *.parquet
 /data/
+# One exception, deliberately narrow. `examples/data/` holds the single small
+# ETH/USDC dataset the committed report and the README images are built from,
+# so both stay reproducible without a Fynd. Its provenance is in the README
+# beside it. The parquet the notebook writes there stays ignored.
+!/examples/data/*.jsonl
 
 # Jupyter
 .ipynb_checkpoints/
