@@ -105,6 +105,18 @@ class TestChooseRobustMid:
     def test_non_finite_pairs_dropped(self) -> None:
         assert choose_robust_mid([(float("nan"), 2500.0), (5000.0, float("inf"))]) is None
 
+    def test_a_scaled_band_selects_scaled_depths(self) -> None:
+        # A numeraire worth $2,500 puts the same dollar band at 1-4 units, where
+        # the default band would find nothing.
+        pairs = [(1.2, 0.98), (2.0, 1.0), (3.5, 1.02)]
+        assert choose_robust_mid(pairs, band_min=1.0, band_max=4.0) == (1.0, 2.0)
+
+    def test_band_edges_are_inclusive(self) -> None:
+        # Three pairs sit strictly inside, so the under-filled-band fallback does
+        # not fire and the pair sitting exactly on band_max decides the median.
+        pairs = [(1.5, 10.0), (2.0, 20.0), (2.5, 30.0), (4.0, 100.0)]
+        assert choose_robust_mid(pairs, band_min=1.0, band_max=4.0) == (25.0, 2.0)
+
 
 class TestRobustMidFromSides:
     def test_pairs_by_rounded_notional(self) -> None:
@@ -132,3 +144,11 @@ class TestRobustMidProbeDepths:
         assert depths[0] == pytest.approx(2500.0)
         assert depths[-1] == pytest.approx(10_000.0)
         assert depths == sorted(depths)
+
+    def test_a_scaled_band_spans_scaled_depths(self) -> None:
+        # The probe span follows the band it was given, not the dollar-shaped
+        # default, so a cheap numeraire is not truncated to the old ceiling.
+        depths = robust_mid_probe_depths(1_000_000.0, band_min=250_000.0, band_max=1_000_000.0)
+        assert len(depths) == 5
+        assert depths[0] == pytest.approx(250_000.0)
+        assert depths[-1] == pytest.approx(1_000_000.0)

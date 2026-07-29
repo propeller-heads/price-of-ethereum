@@ -77,6 +77,25 @@ connector_tokens = [
 # dropped and the single-block guarantee is lost — slower *and* worse routes. The
 # queue cap matches PFW so the bulk sweep overflows cheaply and the budget goes
 # to the anchor quotes that actually wait for all pools (min_responses=0).
+#
+# TUNING FOR ANOTHER CHAIN
+#
+# Those numbers were measured against Ethereum's ~12s blocks, where a 2.5-3.0s
+# snapshot has a comfortable margin. Every other chain Fynd routes on has shorter
+# blocks, and its own liquidity graph, so neither the block interval nor the
+# snapshot duration carries over. Measure both rather than assuming: the block
+# summary records duration_ms and mixed_block, and consecutive block_timestamp
+# values give the real interval.
+#
+# To shorten a snapshot: lower the per-pool timeout_ms and max_routes here, and
+# lower --samples-per-side (which changes what robust_mid means, so it is a
+# measurement decision rather than a performance one). Re-measure rather than
+# guess — the block summary reports duration_ms and mixed_block, which is the
+# feedback loop these values were chosen with.
+#
+# Hundreds of quotes take time, so on a short enough block there is a point past
+# which tuning cannot help and mixed_block stays true. Where that point falls is
+# a measurement, not something to assume.
 [pools.water_fill]
 algorithm = "water_fill"
 num_workers = 4

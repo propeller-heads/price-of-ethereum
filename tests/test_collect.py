@@ -99,7 +99,7 @@ def probe_paced_client(*, advance_after_probes: int) -> FyndClient:
 
 
 def test_probe_block_never_asks_for_encoding() -> None:
-    """The idle poll runs once per `idle_wait_s` and reads only a block number."""
+    """The idle poll runs once per `poll_interval_s` and reads only a block number."""
     payloads: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -117,7 +117,7 @@ def test_probe_block_never_asks_for_encoding() -> None:
 def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
     config = make_config()
     with sweep_paced_client() as fynd:
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=3, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=3, poll_interval_s=0.0)
 
     assert result.blocks_recorded == 3
     assert result.duplicate_snapshots == 0
@@ -139,7 +139,7 @@ def test_collect_records_distinct_blocks(tmp_path: Path) -> None:
 def test_collect_skips_duplicate_blocks(tmp_path: Path) -> None:
     config = make_config()
     with probe_paced_client(advance_after_probes=3) as fynd:
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, poll_interval_s=0.0)
 
     assert result.blocks_recorded == 2
     # The cheap clock absorbs the wait, so no full sweep is thrown away.
@@ -173,13 +173,13 @@ def test_idle_cycle_costs_exactly_one_quote(tmp_path: Path) -> None:
     config = make_config()
     with sweep_paced_client() as seed:
         first = collect_blocks(
-            fynd=seed, config=config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0
+            fynd=seed, config=config, out_dir=tmp_path, blocks=1, poll_interval_s=0.0
         )
     assert first.blocks_recorded == 1
 
     with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
         requests.clear()
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, poll_interval_s=0.0)
 
     assert result.blocks_recorded == 1
     assert result.idle_probes >= 3
@@ -203,7 +203,12 @@ def test_collect_raises_after_consecutive_failures(tmp_path: Path) -> None:
         pytest.raises(CollectionAbortedError, match="3 consecutive"),
     ):
         collect_blocks(
-            fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0, max_consecutive_failures=3
+            fynd,
+            config,
+            out_dir=tmp_path,
+            blocks=1,
+            poll_interval_s=0.0,
+            max_consecutive_failures=3,
         )
     rows_path, blocks_path, anchors_path = output_paths(tmp_path, config)
     assert not rows_path.exists() and not blocks_path.exists() and not anchors_path.exists()
@@ -237,7 +242,7 @@ def test_collect_recovers_after_transient_failures(tmp_path: Path) -> None:
             make_config(),
             out_dir=tmp_path,
             blocks=2,
-            idle_wait_s=0.0,
+            poll_interval_s=0.0,
             max_consecutive_failures=3,
         )
     assert result.blocks_recorded == 2
@@ -250,7 +255,7 @@ def test_collect_recovers_after_transient_failures(tmp_path: Path) -> None:
 def test_collect_resumes_past_block_already_on_disk(tmp_path: Path) -> None:
     config = make_config()
     with sweep_paced_client() as fynd:
-        first = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+        first = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, poll_interval_s=0.0)
     assert load_jsonl(first.blocks_path)["block_number"].tolist() == [amm_sim.BLOCK_NUMBER]
 
     # A fresh client re-serves BLOCK_NUMBER first; the restarted collector must
@@ -258,7 +263,7 @@ def test_collect_resumes_past_block_already_on_disk(tmp_path: Path) -> None:
     # is required here: the block has to advance while the collector waits, which
     # is exactly what it refuses to force by sweeping.
     with probe_paced_client(advance_after_probes=1) as fynd:
-        second = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+        second = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, poll_interval_s=0.0)
     assert second.idle_probes == 1
     assert second.duplicate_snapshots == 0
     recorded = load_jsonl(second.blocks_path)["block_number"].tolist()
@@ -283,7 +288,7 @@ def test_collect_returns_partial_result_on_interrupt(
             raise KeyboardInterrupt
 
         monkeypatch.setattr("price_of_ethereum.collect.collect_snapshot", snapshot_then_interrupt)
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=5, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=5, poll_interval_s=0.0)
 
     assert result.interrupted is True
     assert result.blocks_recorded == 1
@@ -314,7 +319,7 @@ def test_collect_writes_anchor_proof_to_its_own_file(tmp_path: Path) -> None:
         return httpx.Response(200, json=body)
 
     with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=1, poll_interval_s=0.0)
 
     assert result.blocks_recorded == 1
     assert result.anchors_written == 2  # one headline target, both sides
@@ -365,7 +370,7 @@ def test_anchors_accumulate_across_blocks(tmp_path: Path) -> None:
         return httpx.Response(200, json=body)
 
     with FyndClient(transport=httpx.MockTransport(handler)) as fynd:
-        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, idle_wait_s=0.0)
+        result = collect_blocks(fynd, config, out_dir=tmp_path, blocks=2, poll_interval_s=0.0)
 
     assert result.blocks_recorded == 2
     assert result.anchors_written == 4  # one target, both sides, two blocks

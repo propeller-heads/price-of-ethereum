@@ -21,6 +21,7 @@ from urllib.parse import urlencode
 from price_of_ethereum.fynd.client import DEFAULT_SLIPPAGE, DUMMY_SENDER, FyndClient
 from price_of_ethereum.fynd.models import OrderQuote, Transaction
 from price_of_ethereum.pricing import (
+    ROBUST_MID_MAX_DEPTH,
     ROBUST_MID_MIN_DEPTH,
     choose_robust_mid,
     derive_price_impact_bps,
@@ -48,10 +49,6 @@ DEFAULT_IMPACT_LEVELS = (
     2.0, 3.0, 5.0, 7.5, 10.0, 15.0, 25.0, 35.0, 50.0,
 )  # fmt: skip
 DEFAULT_ANCHOR_TARGETS = (0.5, 1.0, 5.0, 10.0, 25.0, 50.0)
-
-# When the sweep produced no usable buy rung, dedicated mid probes cap at this
-# depth (the band cap in `robust_mid_probe_depths` clamps it further).
-FALLBACK_PROBE_MAX_DEPTH = 500_000.0
 
 MidSource = Literal["sweep_band", "probe_fallback", "spot_degraded"]
 
@@ -84,6 +81,14 @@ class SnapshotConfig:
     anchor_bisect_tolerance: float = 0.02
     anchor_accept_tolerance: float = 0.05
     probe_notional: float = 1000.0
+    # The robust-mid band, in numeraire units. The defaults read as dollars and
+    # are only dollars when the numeraire is a dollar stablecoin; `cli` scales
+    # them by a measured rate when it is not.
+    mid_band_min: float = ROBUST_MID_MIN_DEPTH
+    mid_band_max: float = ROBUST_MID_MAX_DEPTH
+    # Dollars per numeraire unit, measured through Fynd, or None when sizes are
+    # raw numeraire units. Recorded so a reader knows what the band meant.
+    numeraire_usd: float | None = None
     # Encoding slippage as a decimal string, Fynd's wire type. Only anchored
     # levels encode, and the default is tight enough that Fynd's price guard
     # refuses the largest sizes — loosen it to get calldata for those.
@@ -170,6 +175,9 @@ class Snapshot:
     search_min: float
     search_max: float
     samples_per_side: int
+    mid_band_min: float
+    mid_band_max: float
+    numeraire_usd: float | None
     slippage: str
     duration_ms: int
 
@@ -253,6 +261,9 @@ class Snapshot:
             "search_min": self.search_min,
             "search_max": self.search_max,
             "samples_per_side": self.samples_per_side,
+            "mid_band_min": self.mid_band_min,
+            "mid_band_max": self.mid_band_max,
+            "numeraire_usd": self.numeraire_usd,
             "slippage": self.slippage,
             "duration_ms": self.duration_ms,
         }
@@ -398,7 +409,9 @@ def probe_fallback_mid(
 ) -> tuple[float, float] | None:
     """Dedicated two-sided probes across the band when the sweep produced no
     usable mid pairs. Probes sort by depth for a deterministic band order."""
-    depths = robust_mid_probe_depths(max_depth)
+    depths = robust_mid_probe_depths(
+        max_depth, band_min=config.mid_band_min, band_max=config.mid_band_max
+    )
     depth_mid_pairs: list[tuple[float, float]] = []
     with ThreadPoolExecutor(max_workers=min(config.max_workers, len(depths))) as pool:
         futures = {pool.submit(_mid_at_depth, fynd, config, depth, spot): depth for depth in depths}
@@ -407,7 +420,9 @@ def probe_fallback_mid(
             if mid is not None:
                 depth_mid_pairs.append((futures[future], mid))
     depth_mid_pairs.sort(key=lambda pair: pair[0])
-    return choose_robust_mid(depth_mid_pairs)
+    return choose_robust_mid(
+        depth_mid_pairs, band_min=config.mid_band_min, band_max=config.mid_band_max
+    )
 
 
 def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
@@ -527,6 +542,8 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
     robust = robust_mid_from_sides(
         [(point.notional, point.price) for point in matching_buy],
         [(point.notional, point.price) for point in matching_sell],
+        band_min=config.mid_band_min,
+        band_max=config.mid_band_max,
     )
     mid_source: MidSource = "sweep_band"
     if robust is None:
@@ -537,12 +554,12 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
             len(matching_buy),
             len(matching_sell),
         )
-        max_depth = matching_buy[-1].notional if matching_buy else FALLBACK_PROBE_MAX_DEPTH
+        max_depth = matching_buy[-1].notional if matching_buy else config.mid_band_max
         robust = probe_fallback_mid(fynd, config, spot, max_depth)
         mid_source = "probe_fallback"
     if robust is None:
         logger.warning("robust mid for %s: every mid probe failed; degrading to spot", config.pair)
-        robust = (spot, ROBUST_MID_MIN_DEPTH)
+        robust = (spot, config.mid_band_min)
         mid_source = "spot_degraded"
     robust_mid, median_depth = robust
 
@@ -581,6 +598,9 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
         search_min=config.search_min,
         search_max=config.search_max,
         samples_per_side=config.samples_per_side,
+        mid_band_min=config.mid_band_min,
+        mid_band_max=config.mid_band_max,
+        numeraire_usd=config.numeraire_usd,
         slippage=config.slippage,
         duration_ms=int((time.monotonic() - started) * 1000),
     )
