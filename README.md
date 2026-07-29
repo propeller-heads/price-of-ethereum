@@ -336,6 +336,9 @@ The rate lands in each block summary as `numeraire_usd`, alongside the
 meant. It is measured once per run, because a band that moved between blocks
 would make them incomparable, and `numeraire_usd_block` records the block it was
 measured at so its age on a later row is visible rather than assumed.
+`numeraire_usd_spread` carries the round trip it was measured across, which is
+what separates a rate taken on a deep pair from one that merely passed the
+tolerance.
 
 Pass `--usd-reference <address>` to choose a different reference,
 `--usd-reference-decimals` to skip the Tycho lookup for it, or `--usd-reference
@@ -395,7 +398,8 @@ a dedicated bisection or was read off the sweep.
 `block_number`, `block_hash`, `block_timestamp`, `mixed_block`, `spot`,
 `robust_mid`, `median_depth`, `mid_source`, `gas_price_wei`, `search_min`,
 `search_max`, `samples_per_side`, `mid_band_min`, `mid_band_max`,
-`numeraire_usd`, `numeraire_usd_block`, `slippage`, `duration_ms`.
+`numeraire_usd`, `numeraire_usd_block`, `numeraire_usd_spread`, `slippage`,
+`duration_ms`.
 
 **`anchors.jsonl`** — the executable proof: `order_id`, `transaction_to`,
 `transaction_value`, `transaction_data`, `router_fee`, `client_fee`,

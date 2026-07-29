@@ -204,8 +204,11 @@ def test_to_block_row_carries_every_summary_field() -> None:
         "mid_band_max": 10_000.0,
         "numeraire_usd": None,
         # The rate is measured once per run, so the block it came from travels
-        # with it and a reader can see how stale it is on a later block.
+        # with it and a reader can see how stale it is on a later block. Its
+        # round-trip cost travels too, because a rate taken on a thin pair is
+        # worth less trust than the same number taken on a deep one.
         "numeraire_usd_block": None,
+        "numeraire_usd_spread": None,
         # The anchors' calldata is only meaningful against the bound it was
         # encoded for, so the summary records it.
         "slippage": "0.001",

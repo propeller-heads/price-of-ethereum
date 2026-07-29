@@ -92,6 +92,10 @@ class SnapshotConfig:
     # incomparable, so `numeraire_usd_block` carries how old it is.
     numeraire_usd: float | None = None
     numeraire_usd_block: int | None = None
+    # Round-trip cost of the pair the rate was measured on. A rate taken at
+    # 0.08% and one admitted at the edge of the tolerance are worth different
+    # amounts of trust, and only this says which happened.
+    numeraire_usd_spread: float | None = None
     # Encoding slippage as a decimal string, Fynd's wire type. Only anchored
     # levels encode, and the default is tight enough that Fynd's price guard
     # refuses the largest sizes — loosen it to get calldata for those.
@@ -182,6 +186,7 @@ class Snapshot:
     mid_band_max: float
     numeraire_usd: float | None
     numeraire_usd_block: int | None
+    numeraire_usd_spread: float | None
     slippage: str
     duration_ms: int
 
@@ -269,6 +274,7 @@ class Snapshot:
             "mid_band_max": self.mid_band_max,
             "numeraire_usd": self.numeraire_usd,
             "numeraire_usd_block": self.numeraire_usd_block,
+            "numeraire_usd_spread": self.numeraire_usd_spread,
             "slippage": self.slippage,
             "duration_ms": self.duration_ms,
         }
@@ -607,6 +613,7 @@ def collect_snapshot(fynd: FyndClient, config: SnapshotConfig) -> Snapshot:
         mid_band_max=config.mid_band_max,
         numeraire_usd=config.numeraire_usd,
         numeraire_usd_block=config.numeraire_usd_block,
+        numeraire_usd_spread=config.numeraire_usd_spread,
         slippage=config.slippage,
         duration_ms=int((time.monotonic() - started) * 1000),
     )

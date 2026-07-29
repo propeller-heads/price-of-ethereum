@@ -528,6 +528,7 @@ def build_config(
         mid_band_max=ROBUST_MID_MAX_DEPTH * scale,
         numeraire_usd=None if measured_rate is None else measured_rate.rate,
         numeraire_usd_block=None if measured_rate is None else measured_rate.block,
+        numeraire_usd_spread=None if measured_rate is None else measured_rate.spread,
         slippage=slippage,
         max_workers=args.max_workers,
     )

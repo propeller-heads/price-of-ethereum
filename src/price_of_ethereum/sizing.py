@@ -105,7 +105,9 @@ def _probe_price(
         ) from error
     if token_out_units <= 0:
         raise SpotProbeError("spot probe returned zero output")
-    return probe_notional / token_out_units, order_quote.block.number
+    # Fynd sends 0 for a quote it solved against no block it can name.
+    block = order_quote.block.number if order_quote.block.number > 0 else None
+    return probe_notional / token_out_units, block
 
 
 def spot_price(

@@ -129,7 +129,7 @@ def _fynd_returning(amount_out: str, status: str = "success") -> FyndClient:
     return FyndClient(transport=httpx.MockTransport(handler))
 
 
-def _two_sided_fynd(ask: float, bid: float) -> FyndClient:
+def _two_sided_fynd(ask: float, bid: float, block: int = 21000000) -> FyndClient:
     """A Fynd quoting WETH at `ask` when buying it and `bid` when selling it.
 
     Both legs price linearly off the amount in, so the rate a probe sees does not
@@ -155,7 +155,7 @@ def _two_sided_fynd(ask: float, bid: float) -> FyndClient:
                         "amount_out_net_gas": str(amount_out),
                         "gas_estimate": "150000",
                         "block": {
-                            "number": 21000000,
+                            "number": block,
                             "hash": "0xabc",
                             "timestamp": 1730000000,
                         },
@@ -195,10 +195,109 @@ def test_reference_rate_reports_a_thin_pair_as_a_wide_spread() -> None:
     assert measured.spread == pytest.approx(0.2, rel=1e-3)
 
 
-def test_reference_rate_failure_on_either_leg_raises() -> None:
+def test_reference_rate_sells_back_exactly_what_it_bought() -> None:
+    # The second leg's size is the one derived quantity here, and a mock that
+    # prices linearly cannot see it: spending 1,000 WETH instead of 0.4 would
+    # return the same rate. So assert the amounts directly. Selling a different
+    # size measures a different point on the curve, and against real liquidity
+    # an oversized leg collapses the bid and fails every run.
+    seen: list[tuple[str, int]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        amount_in = int(order["amount"])
+        buying_weth = order["token_in"].lower() == USDC.lower()
+        seen.append(("buy" if buying_weth else "sell", amount_in))
+        amount_out = (
+            int(amount_in / 10**6 / 2500.0 * 10**18)
+            if buying_weth
+            else int(amount_in / 10**18 * 2500.0 * 10**6)
+        )
+        return httpx.Response(
+            200,
+            json={
+                "orders": [
+                    {
+                        "order_id": "x",
+                        "status": "success",
+                        "amount_in": str(amount_in),
+                        "amount_out": str(amount_out),
+                        "amount_out_net_gas": str(amount_out),
+                        "gas_estimate": "150000",
+                        "block": {"number": 21000000, "hash": "0xabc", "timestamp": 1730000000},
+                    }
+                ],
+                "total_gas_estimate": "150000",
+                "solve_time_ms": 12,
+            },
+        )
+
+    _weth_rate(FyndClient(transport=httpx.MockTransport(handler)))
+    assert [side for side, _ in seen] == ["buy", "sell"]
+    bought_weth = int(1000.0 / 10**6 * 10**6 / 2500.0 * 10**18)
+    assert seen[0][1] == atomic(1000.0, 6)
+    assert seen[1][1] == pytest.approx(bought_weth, rel=1e-9)
+
+
+def test_reference_rate_failure_on_the_first_leg_raises() -> None:
     fynd = _fynd_returning("0", status="no_route_found")
     with pytest.raises(SpotProbeError):
         _weth_rate(fynd)
+
+
+def test_reference_rate_failure_on_the_second_leg_raises() -> None:
+    # Half a round trip is not a rate: the buy side alone is the ask this
+    # function exists to stop using.
+    def handler(request: httpx.Request) -> httpx.Response:
+        order = json.loads(request.content)["orders"][0]
+        if order["token_in"].lower() != USDC.lower():
+            return httpx.Response(
+                200,
+                json={
+                    "orders": [
+                        {
+                            "order_id": "x",
+                            "status": "no_route_found",
+                            "amount_in": order["amount"],
+                            "amount_out": "0",
+                            "amount_out_net_gas": "0",
+                            "gas_estimate": "0",
+                            "block": {"number": 21000000, "hash": "0xabc", "timestamp": 1},
+                        }
+                    ],
+                    "total_gas_estimate": "0",
+                    "solve_time_ms": 1,
+                },
+            )
+        amount_out = int(int(order["amount"]) / 10**6 / 2500.0 * 10**18)
+        return httpx.Response(
+            200,
+            json={
+                "orders": [
+                    {
+                        "order_id": "x",
+                        "status": "success",
+                        "amount_in": order["amount"],
+                        "amount_out": str(amount_out),
+                        "amount_out_net_gas": str(amount_out),
+                        "gas_estimate": "150000",
+                        "block": {"number": 21000000, "hash": "0xabc", "timestamp": 1},
+                    }
+                ],
+                "total_gas_estimate": "150000",
+                "solve_time_ms": 1,
+            },
+        )
+
+    with pytest.raises(SpotProbeError):
+        _weth_rate(FyndClient(transport=httpx.MockTransport(handler)))
+
+
+def test_a_blockless_quote_leaves_the_rate_undated() -> None:
+    # Fynd sends 0 when it cannot name the block it solved against. Recording
+    # that as block 0 would put a sentinel in the summary.
+    fynd = _two_sided_fynd(ask=2510.0, bid=2490.0, block=0)
+    assert _weth_rate(fynd).block is None
 
 
 def test_spot_price_from_probe() -> None:
