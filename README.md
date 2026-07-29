@@ -9,7 +9,9 @@ and tax before measuring (Fynd needs a Tycho API key regardless, to index the
 liquidity it quotes against). Pass `--token-decimals`, `--token-symbol`,
 `--numeraire-decimals` and `--numeraire-symbol` to skip even that lookup.
 
-> Status: verified against Ethereum mainnet. Treat the API as unstable until 1.0.
+> Status: verified end to end against Ethereum mainnet; the other five supported
+> chains have had their block timing and probe cost measured live (2026-07-28),
+> but none has a collected end-to-end dataset. Treat the API as unstable until 1.0.
 
 ## Why
 
