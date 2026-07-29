@@ -127,7 +127,7 @@ class SimulatedChain:
 
     The block advances on the first request to arrive after a quiet gap. A sweep
     fires its quotes back to back, so every snapshot sees exactly one block; the
-    collector's idle probe waits `idle_wait_s` between cycles, so that probe is
+    collector's idle probe waits `poll_interval_s` between cycles, so that probe is
     what moves the chain on. The result is consecutive blocks with no straddles,
     without the simulator needing to recognise which quote is which.
     """
