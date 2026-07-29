@@ -194,8 +194,12 @@ flag on Fynd and nothing here:
 
 `poe` reads the chain id from Fynd's `/v1/info` and picks the matching host, so
 you never pass it twice. **Only Ethereum mainnet has been verified end to end
-against live liquidity.** The other five are wired up but untested — the host
-answers, and nothing beyond that has been checked.
+against live liquidity** — it is the one chain with a collected dataset behind
+it. On the other five, quoting was exercised far enough to time it: each one's
+block interval and the cost of a single probe were measured against live
+liquidity on 2026-07-28, which is where the poll intervals below come from. What
+has not been done there is a full collection run on a real pair, so treat their
+depth numbers as unproven in a way the timing numbers are not.
 
 #### Fast chains break the single-block premise
 
